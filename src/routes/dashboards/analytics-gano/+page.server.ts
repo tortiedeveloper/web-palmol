@@ -326,6 +326,7 @@ export const load: PageServerLoad = async (event: PageServerLoadEvent): Promise<
             maxGanodermaTreeLimitForWarning: maxGanodermaTreeLimit
         } satisfies AnalyticsGanoPageData;
 
+        
     } catch (error: any) {
         const errorMessage = `Gagal memuat data analytics (GanoAI): ${error.message}`;
         console.error(`${logPrefix} MAIN EXCEPTION CAUGHT. Total execution time before error: ${Date.now() - loadStartTime}ms.`);
