@@ -7,20 +7,30 @@ import {
     getDocs,
     query,
     where,
-    Timestamp as FirebaseTimestampType, // Tetap sebagai FirebaseTimestampType untuk kejelasan
+    Timestamp as FirebaseTimestampType, // Ini adalah tipe Timestamp dari 'firebase/firestore'
     orderBy,
-    limit, // Jika masih dipakai untuk debug
-    type QueryDocumentSnapshot,    // <-- PERBAIKAN: Impor tipe
-    type DocumentData             // <-- PERBAIKAN: Impor tipe
+    limit, // Jika masih Anda gunakan untuk debugging
+    type QueryDocumentSnapshot,
+    type DocumentData
 } from 'firebase/firestore';
 import { redirect } from '@sveltejs/kit';
 import type { PageServerLoadEvent, PageServerLoad } from './$types';
-import type { StatisticCardType, Company, Tree, TreeGeoJSONProperties, User, FirebaseTimestamp, TreeDate, UserSessionData } from '$lib/types';
+import type {
+    StatisticCardType,
+    Company,
+    Tree,
+    TreeGeoJSONProperties,
+    User,
+    FirebaseTimestamp, // Tipe kustom Anda dari $lib/types yang memiliki .toDate()
+    TreeDate,
+    UserSessionData
+} from '$lib/types';
 import type { FeatureCollection, Point, Feature } from 'geojson';
 
-// PERBAIKAN SEMENTARA untuk Mapbox Token (REKOMENDASI: Gunakan PUBLIC_MAPBOX_ACCESS_TOKEN di .env dan '$env/static/public')
-const MAPBOX_ACCESS_TOKEN_SERVER = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN || 'pk.eyJ1IjoidG9ydGlla3JlYXRpZiIsImEiOiJjbTc3bWlpY24weGYyMmpwamxzYnMyYzg2In0.vkOZJGRpZusCylE9PVVmOQ'; // Fallback jika env var tidak ada
+// Menggunakan VITE_ env var untuk sementara, idealnya gunakan $env/static/public dengan PUBLIC_ prefix
+const MAPBOX_ACCESS_TOKEN_SERVER = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN || 'pk.eyJ1IjoidG9ydGlla3JlYXRpZiIsImEiOiJjbTc3bWlpY24weGYyMmpwamxzYnMyYzg2In0.vkOZJGRpZusCylE9PVVmOQ'; // Fallback token jika env var tidak ada
 
+// Interface lokal jika belum dipindah ke $lib/types
 interface MonthlyTreeData {
     month: string;
     newTrees: number;
@@ -36,24 +46,43 @@ interface ProblemTree {
     description?: string;
 }
 
-function formatDisplayDate(timestamp: FirebaseTimestamp | undefined | null): string { // Ubah FirebaseTimestampType menjadi FirebaseTimestamp dari $lib/types jika itu yang Anda maksud
+function formatDisplayDate(timestamp: FirebaseTimestamp | undefined | null): string {
     if (!timestamp || !timestamp.toDate) return 'N/A';
     return timestamp.toDate().toLocaleDateString('id-ID', {
         year: 'numeric', month: 'short', day: 'numeric'
     });
 }
 
-const defaultErrorReturn = (errorMessage: string) => ({
-    mapboxAccessToken: MAPBOX_ACCESS_TOKEN_SERVER,
-    companyName: "Error Data",
-    statistics: [] as StatisticCardType[], // Pastikan tipe eksplisit untuk array kosong
-    treeDataGeoJSON: null as FeatureCollection<Point, TreeGeoJSONProperties> | null, // KUNCI PERBAIKAN
-    initialMapCenter: { latitude: -2.5489, longitude: 118.0149, zoom: 5 },
-    treeStatusCompositionData: { series: [] as number[], labels: [] as string[] },
-    treeTrendData: { categories: [] as string[], series: [] as {name: string; type?: string; data: number[]}[] },
-    problemTreesList: [] as ProblemTree[],
-    error: errorMessage
-});
+// Fungsi helper untuk promise dengan timeout
+function promiseWithTimeout<T>(promise: Promise<T>, ms: number, timeoutErrorMessage = 'Operasi memakan waktu terlalu lama'): Promise<T> {
+    let timeoutId: NodeJS.Timeout;
+    const timeoutPromise = new Promise<T>((_, reject) => {
+        timeoutId = setTimeout(() => {
+            reject(new Error(timeoutErrorMessage));
+        }, ms);
+    });
+
+    return Promise.race([
+        promise.finally(() => clearTimeout(timeoutId)),
+        timeoutPromise
+    ]);
+}
+
+const defaultErrorReturn = (errorMessage: string, errorDetails?: any) => {
+    const logPrefix = `[AnalyticsGano Load DefaultErrorReturn - ${new Date().toISOString()}]`;
+    console.error(`${logPrefix} Returning error state: ${errorMessage}`, errorDetails ? errorDetails : '');
+    return {
+        mapboxAccessToken: MAPBOX_ACCESS_TOKEN_SERVER,
+        companyName: "Error Memuat Data",
+        statistics: [] as StatisticCardType[],
+        treeDataGeoJSON: null as FeatureCollection<Point, TreeGeoJSONProperties> | null,
+        initialMapCenter: { latitude: -2.5489, longitude: 118.0149, zoom: 5 },
+        treeStatusCompositionData: { series: [] as number[], labels: [] as string[] },
+        treeTrendData: { categories: [] as string[], series: [] as {name: string; type?: string; data: number[]}[] },
+        problemTreesList: [] as ProblemTree[],
+        error: errorMessage // Properti 'error' ini akan mengisi $page.error di client
+    };
+};
 
 export const load: PageServerLoad = async (event: PageServerLoadEvent) => {
     const loadStartTime = Date.now();
@@ -63,51 +92,86 @@ export const load: PageServerLoad = async (event: PageServerLoadEvent) => {
     const userSession = event.locals.user as UserSessionData | undefined;
 
     if (!userSession || !userSession.hasGanoAIAccess || !userSession.ganoAICompanyId) {
-        console.warn(`${logPrefix} Invalid session or missing GanoAI companyId. Redirecting to sign-in.`);
+        console.warn(`${logPrefix} Invalid session or missing GanoAI companyId. User: ${JSON.stringify(userSession)}. Redirecting to sign-in.`);
         throw redirect(303, '/auth/sign-in');
     }
     const companyIdToLoad = userSession.ganoAICompanyId;
     console.log(`${logPrefix} Target Company ID: ${companyIdToLoad}. User email: ${userSession.email}`);
 
-    if (!ganoAIApp || !ganoAIDb) {
-        console.error(`${logPrefix} CRITICAL: Firebase ganoAIApp or ganoAIDb is NOT INITIALIZED!`);
-        return defaultErrorReturn('Konfigurasi Firebase GanoAI bermasalah.');
+    if (!ganoAIApp) { // ganoAIApp dari ganoAIClient
+        console.error(`${logPrefix} CRITICAL: ganoAIApp (Firebase App) is NOT INITIALIZED!`);
+        return defaultErrorReturn('Konfigurasi Firebase GanoAI bermasalah (App).');
+    }
+    if (!ganoAIDb) { // ganoAIDb dari ganoAIClient
+         console.error(`${logPrefix} CRITICAL: ganoAIDb (Firestore instance) is NOT INITIALIZED!`);
+         return defaultErrorReturn('Konfigurasi Firebase GanoAI bermasalah (DB).');
     }
     console.log(`${logPrefix} Firebase ganoAIApp and ganoAIDb instances appear available.`);
 
+    const TIMEOUT_DURATION = 7000; // 7 detik untuk setiap panggilan Firestore utama
+
     try {
         let stepStartTime = Date.now();
-        console.log(`${logPrefix} STEP 1: Fetching company document... (Company ID: ${companyIdToLoad})`);
+        console.log(`${logPrefix} STEP 1: Preparing to fetch company document... (Company ID: ${companyIdToLoad})`);
         const companyRef = doc(ganoAIDb, 'company', companyIdToLoad);
-        const companyDocSnap = await getDoc(companyRef);
-        console.log(`${logPrefix} STEP 1 DONE. companyDocSnap.exists(): ${companyDocSnap.exists()}. Duration: ${Date.now() - stepStartTime}ms`);
+        let companyDocSnap: DocumentData | null = null; // Menggunakan DocumentData, bisa juga DocumentSnapshot
 
-        if (!companyDocSnap.exists()) {
-            const msg = `Perusahaan dengan ID ${companyIdToLoad} tidak ditemukan di GanoAI.`;
-            console.warn(`${logPrefix} ${msg}. Total time: ${Date.now() - loadStartTime}ms`);
+        try {
+            console.log(`${logPrefix} STEP 1.1: Calling getDoc(companyRef) with ${TIMEOUT_DURATION}ms timeout...`);
+            const docSnap = await promiseWithTimeout(
+                getDoc(companyRef),
+                TIMEOUT_DURATION,
+                `Firestore getDoc('company') timed out after ${TIMEOUT_DURATION/1000}s for companyId ${companyIdToLoad}`
+            );
+            companyDocSnap = docSnap; // Assign setelah sukses
+            console.log(`${logPrefix} STEP 1.1 DONE. getDoc resolved. Doc exists: ${companyDocSnap?.exists()}`);
+        } catch (e: any) {
+            console.error(`${logPrefix} STEP 1.1 FAILED (getDoc or timeout). Duration: ${Date.now() - stepStartTime}ms. Error Name: ${e.name}, Message: ${e.message}`, e.stack);
+            throw e; // Lempar ulang untuk ditangkap oleh catch utama dan log detail
+        }
+        
+        if (!companyDocSnap || !companyDocSnap.exists()) {
+            const msg = `Perusahaan dengan ID ${companyIdToLoad} tidak ditemukan atau data tidak valid setelah getDoc.`;
+            console.warn(`${logPrefix} ${msg}. companyDocSnap is: ${companyDocSnap}. Total time: ${Date.now() - loadStartTime}ms`);
             return defaultErrorReturn(msg);
         }
         const companyData = { id: companyDocSnap.id, ...companyDocSnap.data() } as Company;
-        console.log(`${logPrefix} Company data for "${companyData.company_name}" (ID: ${companyData.id}) processed.`);
+        console.log(`${logPrefix} Company data for "${companyData.company_name}" (ID: ${companyData.id}) processed. Duration from step start: ${Date.now() - stepStartTime}ms`);
 
         stepStartTime = Date.now();
         console.log(`${logPrefix} STEP 2: Fetching users for company ${companyIdToLoad}...`);
         const usersMap = new Map<string, string>();
         const usersColRef = collection(ganoAIDb, 'users');
         const companyUsersQuery = query(usersColRef, where('companyId', '==', companyIdToLoad));
-        const usersSnapshot = await getDocs(companyUsersQuery);
+        let usersSnapshot;
+        try {
+            console.log(`${logPrefix} STEP 2.1: Calling getDocs(companyUsersQuery) with ${TIMEOUT_DURATION}ms timeout...`);
+            usersSnapshot = await promiseWithTimeout(getDocs(companyUsersQuery), TIMEOUT_DURATION, `Firestore getDocs('users') timed out`);
+            console.log(`${logPrefix} STEP 2.1 DONE. Fetched ${usersSnapshot.size} users.`);
+        } catch (e:any) {
+            console.error(`${logPrefix} STEP 2.1 FAILED (getDocs(users) or timeout). Duration: ${Date.now() - stepStartTime}ms. Error: ${e.message}`, e.stack);
+            throw e;
+        }
         usersSnapshot.forEach(userDoc => {
             const userData = userDoc.data() as User;
             usersMap.set(userDoc.id, userData.name || 'Tanpa Nama');
         });
-        console.log(`${logPrefix} STEP 2 DONE. Fetched and mapped ${usersSnapshot.size} users. Duration: ${Date.now() - stepStartTime}ms`);
+        console.log(`${logPrefix} STEP 2 DONE. Users mapped. Duration from step start: ${Date.now() - stepStartTime}ms`);
 
         stepStartTime = Date.now();
         console.log(`${logPrefix} STEP 3: Fetching trees for company ${companyIdToLoad}...`);
         const treesColRef = collection(ganoAIDb, `company/${companyIdToLoad}/tree`);
         const allTreesQuery = query(treesColRef, orderBy('date.updatedDate', 'desc'));
-        const allTreesSnapshot = await getDocs(allTreesQuery);
-        console.log(`${logPrefix} STEP 3 DONE. Fetched ${allTreesSnapshot.size} trees. Duration: ${Date.now() - stepStartTime}ms`);
+        let allTreesSnapshot;
+        try {
+            console.log(`${logPrefix} STEP 3.1: Calling getDocs(allTreesQuery) with ${TIMEOUT_DURATION}ms timeout...`);
+            allTreesSnapshot = await promiseWithTimeout(getDocs(allTreesQuery), TIMEOUT_DURATION, `Firestore getDocs('trees') timed out`);
+            console.log(`${logPrefix} STEP 3.1 DONE. Fetched ${allTreesSnapshot.size} trees.`);
+        } catch (e:any) {
+            console.error(`${logPrefix} STEP 3.1 FAILED (getDocs(trees) or timeout). Duration: ${Date.now() - stepStartTime}ms. Error: ${e.message}`, e.stack);
+            throw e;
+        }
+        console.log(`${logPrefix} STEP 3 DONE. Duration from step start: ${Date.now() - stepStartTime}ms`);
 
         console.log(`${logPrefix} STEP 4: Processing ${allTreesSnapshot.size} trees...`);
         stepStartTime = Date.now();
@@ -124,11 +188,11 @@ export const load: PageServerLoad = async (event: PageServerLoadEvent) => {
         const monthlyDataAgg: Record<string, { newTrees: number; newlySickTrees: number }> = {};
         const problemTreesList: ProblemTree[] = [];
 
-        allTreesSnapshot.forEach((treeDoc: QueryDocumentSnapshot<DocumentData>) => { // <-- PERBAIKAN TIPE DI SINI
+        allTreesSnapshot.forEach((treeDoc: QueryDocumentSnapshot<DocumentData>) => {
             totalTrees++;
             const rawTreeData = treeDoc.data();
             if (!rawTreeData) {
-                console.warn(`${logPrefix} Found treeDoc with no data. ID: ${treeDoc.id}. Skipping.`);
+                console.warn(`${logPrefix} Found treeDoc with no data during tree processing. ID: ${treeDoc.id}. Skipping.`);
                 return; 
             }
 
@@ -157,8 +221,7 @@ export const load: PageServerLoad = async (event: PageServerLoadEvent) => {
                     }
                 });
             }
-            // PERBAIKAN: Gunakan tipe FirebaseTimestamp dari $lib/types jika itu yang dimaksud untuk rawTreeData.date.createdDate
-            const createdDateFirestore = rawTreeData.date?.createdDate as FirebaseTimestamp | undefined; 
+            const createdDateFirestore = rawTreeData.date?.createdDate as FirebaseTimestamp | undefined;
             const updatedDateFirestore = rawTreeData.date?.updatedDate as FirebaseTimestamp | undefined;
 
             if (createdDateFirestore && typeof createdDateFirestore.toDate === 'function') {
@@ -232,12 +295,12 @@ export const load: PageServerLoad = async (event: PageServerLoadEvent) => {
         };
 
     } catch (error: any) {
-        const errorMessage = `Gagal memuat data analytics (GanoAI): Terjadi kesalahan pada server - ${error.message}`;
-        console.error(`${logPrefix} EXCEPTION CAUGHT. Total execution time before error: ${Date.now() - loadStartTime}ms.`);
-        console.error(`${logPrefix} Error Message: ${error.message}`);
+        const errorMessage = `Gagal memuat data analytics (GanoAI): ${error.message}`;
+        console.error(`${logPrefix} MAIN EXCEPTION CAUGHT. Total execution time before error: ${Date.now() - loadStartTime}ms.`);
+        console.error(`${logPrefix} Error Name: ${error.name}, Message: ${error.message}`);
         console.error(`${logPrefix} Error Stack: ${error.stack}`);
         if (error.code) console.error(`${logPrefix} Firebase Error Code: ${error.code}`);
         
-        return defaultErrorReturn(errorMessage);
+        return defaultErrorReturn(errorMessage, error); // Kirim detail error ke helper jika perlu
     }
 };
