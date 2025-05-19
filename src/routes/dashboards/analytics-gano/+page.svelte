@@ -2,16 +2,18 @@
     import DefaultLayout from "$lib/layouts/DefaultLayout.svelte";
     import PageBreadcrumb from "$lib/components/PageBreadcrumb.svelte";
     import { Row, Col, Card, CardHeader, CardBody, CardTitle, Alert } from "@sveltestrap/sveltestrap";
-    import StatisticsCard from "./components/StatisticsCard.svelte"; // Pastikan path ini benar
+    import StatisticsCard from "./components/StatisticsCard.svelte";
     import MapboxMap from "$lib/components/MapboxMap.svelte";
     import ApexChart from "$lib/components/ApexChart.svelte";
-    import ProblemTreesTable from "./components/ProblemTreesTable.svelte"; // Pastikan path ini benar
+    import ProblemTreesTable from "./components/ProblemTreesTable.svelte";
+    import GanodermaWarning from "./components/GanodermaWarning.svelte"; // Impor komponen peringatan
 
-    import type { PageData } from './$types';
+    import type { PageData } from './$types'; // Ini akan mengambil tipe dari server load function
     import type { ApexOptions } from "apexcharts";
 
-    export let data: PageData; // 'data' ini datang dari SvelteKit
+    export let data: PageData;
 
+    // Data utama
     $: statistics = data?.statistics || [];
     $: companyName = data?.companyName || "Analytics Dashboard";
     $: pageTitle = data?.error ? "Error Memuat Data" : `Analytics: ${companyName}`;
@@ -19,7 +21,13 @@
     $: currentMapboxAccessToken = data?.mapboxAccessToken;
     $: currentInitialMapCenter = data?.initialMapCenter || { latitude: -2.5489, longitude: 118.0149, zoom: 5 };
     
-    const basePerformanceChartOptions: ApexOptions = { /* ... opsi Anda ... */
+    // Data untuk peringatan Ganoderma dari PageData
+    // TypeScript akan error di sini jika PageData belum terupdate
+    $: showGanodermaWarning = data?.showGanodermaWarning || false;
+    $: sickTreesCountForWarning = data?.sickTreesCountForWarning || 0;
+    $: maxGanodermaLimitForWarning = data?.maxGanodermaTreeLimitForWarning || 0;
+
+    const basePerformanceChartOptions: ApexOptions = {
         chart: { height: 313, type: "line", toolbar: { show: false } },
         stroke: { dashArray: [0, 5], width: [2, 2], curve: 'smooth' },
         fill: { opacity: [1, 0.15], type: ['solid', 'gradient'], gradient: { type: "vertical", inverseColors: false, opacityFrom: 0.5, opacityTo: 0, stops: [0, 90] }},
@@ -36,13 +44,13 @@
         colors: ["#7f56da", "#ff6384"],
         tooltip: { shared: true, y: { formatter: (y: number) => (typeof y !== "undefined" ? y.toFixed(0) : y) } },
     };
-    const baseCompositionChartOptions: ApexOptions = { /* ... opsi Anda ... */
+    const baseCompositionChartOptions: ApexOptions = {
         chart: { height: 320, type: 'donut' },
         plotOptions: { pie: { donut: { size: '65%' } } },
         colors: ['#2ECC40', '#FF4136', '#FFDC00', '#AAAAAA'],
         legend: { 
             show: true, position: 'bottom', horizontalAlign: 'center', offsetY: 5,
-             markers: { size: 8, strokeWidth: 0, offsetX: 0, offsetY: 0 },
+            markers: { size: 8, strokeWidth: 0, offsetX: 0, offsetY: 0 },
         },
         labels: [],
         responsive: [{ breakpoint: 480, options: { chart: { width: 200 }, legend: { position: 'bottom' } } }]
@@ -61,16 +69,28 @@
     } : { ...baseCompositionChartOptions, series: [], labels: []};
 
     $: problemTrees = data?.problemTreesList || [];
+
+    // Untuk debug di browser console, pastikan data benar-benar ada
+    // $: if(data) console.log("Data from server in +page.svelte:", data);
+
 </script>
 
 <DefaultLayout {data}>
     <PageBreadcrumb title={pageTitle} subTitle="Dashboards" />
 
     {#if data?.error}
-        <Alert color="danger" class="mt-2">{data.error}</Alert>
+        <Alert color="danger" class="mt-3">{data.error}</Alert>
     {/if}
 
-    <Row class="mt-2">
+    {#if showGanodermaWarning && !data?.error }
+        <GanodermaWarning 
+            sickTrees={sickTreesCountForWarning} 
+            limit={maxGanodermaLimitForWarning}
+            companyName={companyName}
+        />
+    {/if}
+
+    <Row class="mt-2"> 
         {#if statistics.length > 0}
             {#each statistics as item, i (item.title)}
                 <Col md="6" xl="3" class="mb-3 d-flex"> 

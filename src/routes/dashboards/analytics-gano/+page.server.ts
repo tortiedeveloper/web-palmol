@@ -9,7 +9,7 @@ import {
     where,
     Timestamp as FirebaseTimestampType, // Ini adalah tipe Timestamp dari 'firebase/firestore'
     orderBy,
-    limit, // Jika masih Anda gunakan untuk debugging
+    limit,
     type QueryDocumentSnapshot,
     type DocumentData
 } from 'firebase/firestore';
@@ -22,13 +22,14 @@ import type {
     TreeGeoJSONProperties,
     User,
     FirebaseTimestamp, // Tipe kustom Anda dari $lib/types yang memiliki .toDate()
-    TreeDate,
+    // TreeDate, // TreeDate tampaknya tidak digunakan secara langsung di return type, FirebaseTimestamp cukup
     UserSessionData
 } from '$lib/types';
 import type { FeatureCollection, Point, Feature } from 'geojson';
 
-// Menggunakan VITE_ env var untuk sementara, idealnya gunakan $env/static/public dengan PUBLIC_ prefix
-const MAPBOX_ACCESS_TOKEN_SERVER = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN || 'pk.eyJ1IjoidG9ydGlla3JlYXRpZiIsImEiOiJjbTc3bWlpY24weGYyMmpwamxzYnMyYzg2In0.vkOZJGRpZusCylE9PVVmOQ'; // Fallback token jika env var tidak ada
+// Akses variabel lingkungan
+const MAPBOX_ACCESS_TOKEN_SERVER = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN || 'pk.eyJ1IjoidG9ydGlla3JlYXRpZiIsImEiOiJjbTc3bWlpY24weGYyMmpwamxzYnMyYzg2In0.vkOZJGRpZusCylE9PVVmOQ';
+const MAX_GANODERMA_TREE_STRING = import.meta.env.VITE_MAX_GANODERMA_TREE;
 
 // Interface lokal jika belum dipindah ke $lib/types
 interface MonthlyTreeData {
@@ -46,6 +47,23 @@ interface ProblemTree {
     description?: string;
 }
 
+// Definisikan tipe data spesifik untuk halaman ini
+interface AnalyticsGanoPageData {
+    mapboxAccessToken: string;
+    companyName: string;
+    statistics: StatisticCardType[];
+    treeDataGeoJSON: FeatureCollection<Point, TreeGeoJSONProperties> | null;
+    initialMapCenter: { latitude: number; longitude: number; zoom: number };
+    treeStatusCompositionData: { series: number[]; labels: string[] };
+    treeTrendData: { categories: string[]; series: { name: string; type?: string; data: number[] }[] };
+    problemTreesList: ProblemTree[];
+    error: string | null;
+    showGanodermaWarning: boolean;
+    sickTreesCountForWarning: number;
+    maxGanodermaTreeLimitForWarning: number;
+}
+
+
 function formatDisplayDate(timestamp: FirebaseTimestamp | undefined | null): string {
     if (!timestamp || !timestamp.toDate) return 'N/A';
     return timestamp.toDate().toLocaleDateString('id-ID', {
@@ -53,7 +71,6 @@ function formatDisplayDate(timestamp: FirebaseTimestamp | undefined | null): str
     });
 }
 
-// Fungsi helper untuk promise dengan timeout
 function promiseWithTimeout<T>(promise: Promise<T>, ms: number, timeoutErrorMessage = 'Operasi memakan waktu terlalu lama'): Promise<T> {
     let timeoutId: NodeJS.Timeout;
     const timeoutPromise = new Promise<T>((_, reject) => {
@@ -68,53 +85,61 @@ function promiseWithTimeout<T>(promise: Promise<T>, ms: number, timeoutErrorMess
     ]);
 }
 
-const defaultErrorReturn = (errorMessage: string, errorDetails?: any) => {
+const defaultErrorReturn = (errorMessage: string, errorDetails?: any): AnalyticsGanoPageData => {
     const logPrefix = `[AnalyticsGano Load DefaultErrorReturn - ${new Date().toISOString()}]`;
     console.error(`${logPrefix} Returning error state: ${errorMessage}`, errorDetails ? errorDetails : '');
+    const maxGanodermaTreeLimit = parseInt(MAX_GANODERMA_TREE_STRING || '5', 10);
     return {
         mapboxAccessToken: MAPBOX_ACCESS_TOKEN_SERVER,
         companyName: "Error Memuat Data",
         statistics: [] as StatisticCardType[],
-        treeDataGeoJSON: null as FeatureCollection<Point, TreeGeoJSONProperties> | null,
+        treeDataGeoJSON: null,
         initialMapCenter: { latitude: -2.5489, longitude: 118.0149, zoom: 5 },
         treeStatusCompositionData: { series: [] as number[], labels: [] as string[] },
         treeTrendData: { categories: [] as string[], series: [] as {name: string; type?: string; data: number[]}[] },
         problemTreesList: [] as ProblemTree[],
-        error: errorMessage // Properti 'error' ini akan mengisi $page.error di client
+        error: errorMessage,
+        showGanodermaWarning: false,
+        sickTreesCountForWarning: 0,
+        maxGanodermaTreeLimitForWarning: maxGanodermaTreeLimit,
     };
 };
 
-export const load: PageServerLoad = async (event: PageServerLoadEvent) => {
+export const load: PageServerLoad = async (event: PageServerLoadEvent): Promise<AnalyticsGanoPageData> => {
     const loadStartTime = Date.now();
     const logPrefix = `[AnalyticsGano Load - ${new Date(loadStartTime).toISOString()}]`;
 
     console.log(`${logPrefix} Function execution started.`);
     const userSession = event.locals.user as UserSessionData | undefined;
 
+    const maxGanodermaTreeLimit = parseInt(MAX_GANODERMA_TREE_STRING || '5', 10);
+
     if (!userSession || !userSession.hasGanoAIAccess || !userSession.ganoAICompanyId) {
         console.warn(`${logPrefix} Invalid session or missing GanoAI companyId. User: ${JSON.stringify(userSession)}. Redirecting to sign-in.`);
+        // Untuk redirect, kita tidak mengembalikan AnalyticsGanoPageData, jadi perlu penanganan khusus jika ingin tipe strict.
+        // Namun, SvelteKit akan menangani redirect sebelum tipe return dievaluasi sepenuhnya.
         throw redirect(303, '/auth/sign-in');
     }
     const companyIdToLoad = userSession.ganoAICompanyId;
-    console.log(`${logPrefix} Target Company ID: ${companyIdToLoad}. User email: ${userSession.email}`);
+    console.log(`${logPrefix} Target Company ID: ${companyIdToLoad}. User email: ${userSession.email}. Max Ganoderma Trees: ${maxGanodermaTreeLimit}`);
 
-    if (!ganoAIApp) { // ganoAIApp dari ganoAIClient
+    if (!ganoAIApp) {
         console.error(`${logPrefix} CRITICAL: ganoAIApp (Firebase App) is NOT INITIALIZED!`);
-        return defaultErrorReturn('Konfigurasi Firebase GanoAI bermasalah (App).');
+        return defaultErrorReturn('Konfigurasi Firebase GanoAI bermasalah (App).') satisfies AnalyticsGanoPageData;
     }
-    if (!ganoAIDb) { // ganoAIDb dari ganoAIClient
-         console.error(`${logPrefix} CRITICAL: ganoAIDb (Firestore instance) is NOT INITIALIZED!`);
-         return defaultErrorReturn('Konfigurasi Firebase GanoAI bermasalah (DB).');
+    if (!ganoAIDb) {
+        console.error(`${logPrefix} CRITICAL: ganoAIDb (Firestore instance) is NOT INITIALIZED!`);
+        return defaultErrorReturn('Konfigurasi Firebase GanoAI bermasalah (DB).') satisfies AnalyticsGanoPageData;
     }
     console.log(`${logPrefix} Firebase ganoAIApp and ganoAIDb instances appear available.`);
 
-    const TIMEOUT_DURATION = 30000; // 7 detik untuk setiap panggilan Firestore utama
+    const TIMEOUT_DURATION = 30000;
 
     try {
         let stepStartTime = Date.now();
         console.log(`${logPrefix} STEP 1: Preparing to fetch company document... (Company ID: ${companyIdToLoad})`);
         const companyRef = doc(ganoAIDb, 'company', companyIdToLoad);
-        let companyDocSnap: DocumentData | null = null; // Menggunakan DocumentData, bisa juga DocumentSnapshot
+        let companyDocSnap: QueryDocumentSnapshot<DocumentData> | DocumentData | null = null; // Disesuaikan tipenya
 
         try {
             console.log(`${logPrefix} STEP 1.1: Calling getDoc(companyRef) with ${TIMEOUT_DURATION}ms timeout...`);
@@ -123,17 +148,17 @@ export const load: PageServerLoad = async (event: PageServerLoadEvent) => {
                 TIMEOUT_DURATION,
                 `Firestore getDoc('company') timed out after ${TIMEOUT_DURATION/1000}s for companyId ${companyIdToLoad}`
             );
-            companyDocSnap = docSnap; // Assign setelah sukses
+            companyDocSnap = docSnap;
             console.log(`${logPrefix} STEP 1.1 DONE. getDoc resolved. Doc exists: ${companyDocSnap?.exists()}`);
         } catch (e: any) {
             console.error(`${logPrefix} STEP 1.1 FAILED (getDoc or timeout). Duration: ${Date.now() - stepStartTime}ms. Error Name: ${e.name}, Message: ${e.message}`, e.stack);
-            throw e; // Lempar ulang untuk ditangkap oleh catch utama dan log detail
+            throw e; 
         }
         
         if (!companyDocSnap || !companyDocSnap.exists()) {
             const msg = `Perusahaan dengan ID ${companyIdToLoad} tidak ditemukan atau data tidak valid setelah getDoc.`;
             console.warn(`${logPrefix} ${msg}. companyDocSnap is: ${companyDocSnap}. Total time: ${Date.now() - loadStartTime}ms`);
-            return defaultErrorReturn(msg);
+            return defaultErrorReturn(msg) satisfies AnalyticsGanoPageData;
         }
         const companyData = { id: companyDocSnap.id, ...companyDocSnap.data() } as Company;
         console.log(`${logPrefix} Company data for "${companyData.company_name}" (ID: ${companyData.id}) processed. Duration from step start: ${Date.now() - stepStartTime}ms`);
@@ -248,7 +273,7 @@ export const load: PageServerLoad = async (event: PageServerLoadEvent) => {
                 });
             }
         });
-        console.log(`${logPrefix} STEP 4 DONE. Trees processed. Duration: ${Date.now() - stepStartTime}ms`);
+        console.log(`${logPrefix} STEP 4 DONE. Trees processed. Sick Trees for KPI: ${kpiSickTrees}. Duration: ${Date.now() - stepStartTime}ms`);
         
         console.log(`${logPrefix} STEP 5: Constructing final data objects...`);
         stepStartTime = Date.now();
@@ -260,15 +285,15 @@ export const load: PageServerLoad = async (event: PageServerLoadEvent) => {
             { icon: 'mdi:virus-off-outline', variant: 'danger', title: 'Pohon Sakit (Ganoderma)', statistic: kpiSickTrees },
             { icon: 'mdi:chart-pie', variant: 'warning', title: 'Persentase Sakit', statistic: `${percentageSickForKPI}%` },
         ];
-        const treeStatusCompositionData = {
-            series: [chartRecoveredCount, chartSickCount, chartMaintenanceCount],
-            labels: ['Sudah Pulih', 'Terkena Ganoderma', 'Dalam Perawatan']
-        };
+        const treeStatusCompositionDataSeries = [chartRecoveredCount, chartSickCount, chartMaintenanceCount];
+        const treeStatusCompositionDataLabels = ['Sudah Pulih', 'Terkena Ganoderma', 'Dalam Perawatan'];
         if (chartOtherStatusCount > 0) {
-            treeStatusCompositionData.series.push(chartOtherStatusCount);
-            treeStatusCompositionData.labels.push('Status Lain');
+            treeStatusCompositionDataSeries.push(chartOtherStatusCount);
+            treeStatusCompositionDataLabels.push('Status Lain');
         }
-        const sortedMonths = Object.keys(monthlyDataAgg).sort().slice(-12);
+        const treeStatusCompositionData = { series: treeStatusCompositionDataSeries, labels: treeStatusCompositionDataLabels };
+
+        const sortedMonths = Object.keys(monthlyDataAgg).sort((a, b) => a.localeCompare(b)).slice(-12); // Pastikan urutan bulan benar
         const treeTrendData = {
             categories: sortedMonths.map(month => {
                 const [year, m] = month.split('-');
@@ -279,6 +304,10 @@ export const load: PageServerLoad = async (event: PageServerLoadEvent) => {
                 { name: 'Pohon Sakit Dilaporkan', type: 'line', data: sortedMonths.map(month => monthlyDataAgg[month]?.newlySickTrees || 0) }
             ]
         };
+        const showGanodermaWarning = kpiSickTrees > maxGanodermaTreeLimit;
+        if (showGanodermaWarning) {
+            console.warn(`${logPrefix} GANODERMA WARNING! Sick trees (${kpiSickTrees}) exceed limit (${maxGanodermaTreeLimit}).`);
+        }
         console.log(`${logPrefix} STEP 5 DONE. Final data objects constructed. Duration: ${Date.now() - stepStartTime}ms`);
 
         console.log(`${logPrefix} All data processing complete. Total execution time: ${Date.now() - loadStartTime}ms. Returning successful data for company ${companyData.company_name}.`);
@@ -291,8 +320,11 @@ export const load: PageServerLoad = async (event: PageServerLoadEvent) => {
             treeStatusCompositionData,
             treeTrendData,
             problemTreesList,
-            error: null
-        };
+            error: null,
+            showGanodermaWarning: showGanodermaWarning,
+            sickTreesCountForWarning: kpiSickTrees,
+            maxGanodermaTreeLimitForWarning: maxGanodermaTreeLimit
+        } satisfies AnalyticsGanoPageData;
 
     } catch (error: any) {
         const errorMessage = `Gagal memuat data analytics (GanoAI): ${error.message}`;
@@ -301,6 +333,6 @@ export const load: PageServerLoad = async (event: PageServerLoadEvent) => {
         console.error(`${logPrefix} Error Stack: ${error.stack}`);
         if (error.code) console.error(`${logPrefix} Firebase Error Code: ${error.code}`);
         
-        return defaultErrorReturn(errorMessage, error); // Kirim detail error ke helper jika perlu
+        return defaultErrorReturn(errorMessage, error) satisfies AnalyticsGanoPageData;
     }
 };

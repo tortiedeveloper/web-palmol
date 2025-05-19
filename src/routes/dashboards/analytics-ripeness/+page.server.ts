@@ -39,7 +39,7 @@ export const load: PageServerLoad = async (event: PageServerLoadEvent) => {
         throw redirect(303, '/auth/sign-in');
     }
     const companyIdToLoad = userSession.ripenessCompanyId;
-    const mapboxAccessToken = 'pk.eyJ1IjoidG9ydGlla3JlYXRpZiIsImEiOiJjbTc3bWlpY24weGYyMmpwamxzYnMyYzg2In0.vkOZJGRpZusCylE9PVVmOQ'; // Dari env var idealnya
+    const mapboxAccessToken = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN || 'pk.eyJ1IjoidG9ydGlla3JlYXRpZiIsImEiOiJjbTc3bWlpY24weGYyMmpwamxzYnMyYzg2In0.vkOZJGRpZusCylE9PVVmOQ';
 
     console.log(`[AnalyticsRipeness Load] Memuat data untuk perusahaan ID Ripeness: ${companyIdToLoad}`);
 
