@@ -108,7 +108,7 @@ export const load: PageServerLoad = async (event: PageServerLoadEvent) => {
     }
     console.log(`${logPrefix} Firebase ganoAIApp and ganoAIDb instances appear available.`);
 
-    const TIMEOUT_DURATION = 20000; // 7 detik untuk setiap panggilan Firestore utama
+    const TIMEOUT_DURATION = 30000; // 7 detik untuk setiap panggilan Firestore utama
 
     try {
         let stepStartTime = Date.now();
