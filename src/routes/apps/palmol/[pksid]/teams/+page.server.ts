@@ -1,52 +1,65 @@
 // src/routes/apps/palmol/[pksid]/teams/+page.server.ts
 import type { PageServerLoad } from './$types';
-import { ripenessDb } from '$lib/firebase/ripenessClient';
-// PERBAIKAN: Impor collection, doc, getDoc, getDocs, orderBy, query, where, QueryDocumentSnapshot, Timestamp
-import { 
-    collection, 
-    doc, 
-    getDoc,        // Untuk mengambil satu dokumen
-    getDocs,       // Untuk mengambil hasil query (banyak dokumen)
-    orderBy, 
-    query, 
-    where, 
-    type Timestamp as FirebaseTimestampType,
-    type QueryDocumentSnapshot // Tipe untuk dokumen dalam hasil query
-} from 'firebase/firestore';
+import { ripenessDbAdmin } from '$lib/server/adminRipeness'; // Menggunakan Admin SDK
+import admin from 'firebase-admin'; // Untuk tipe Timestamp Admin SDK
 import { error as svelteKitError, redirect } from '@sveltejs/kit';
-import type { PKSTeam, UserSessionData } from '$lib/types';
+import type { PKSTeam, UserSessionData, PKS } from '$lib/types'; // Impor PKS
+import dayjs from 'dayjs'; // Untuk format tanggal
+import 'dayjs/locale/id';
+dayjs.locale('id');
+
+// Fungsi helper untuk format tanggal dari Admin Timestamp atau ISO String
+function formatAdminTimestampToDisplay(timestamp: admin.firestore.Timestamp | string | undefined | null): string {
+    if (!timestamp) return 'Belum ada laporan'; // Atau N/A
+    try {
+        const dateObj = (typeof timestamp === 'string') ? new Date(timestamp) : timestamp.toDate();
+        if (isNaN(dateObj.getTime())) return 'Invalid Date';
+        return dayjs(dateObj).format('DD MMM YYYY, HH:mm');
+    } catch (e) {
+        console.error("Error formatting admin timestamp for team list:", e);
+        return 'Format Error';
+    }
+}
 
 export const load: PageServerLoad = async ({ params, locals }) => {
     const userSession = locals.user as UserSessionData | undefined;
-    const pksId = params.pksid; 
+    const pksId = params.pksid;
 
-    if (!userSession || !userSession.hasRipenessAccess || !userSession.ripenessCompanyId) {
+    if (!userSession?.hasRipenessAccess || !userSession.ripenessCompanyId) {
+        console.warn("[TeamsList Server Load] Sesi Ripeness tidak valid, redirecting.");
         throw redirect(303, '/auth/sign-in');
     }
-    // Tidak perlu: const companyIdToLoad = userSession.ripenessCompanyId; karena PKS ID sudah unik
 
     if (!pksId) {
         throw svelteKitError(400, 'ID PKS diperlukan.');
     }
 
-    try {
-        const pksDocRef = doc(ripenessDb, 'pks', pksId);
-        // PERBAIKAN: Gunakan getDoc(pksDocRef)
-        const pksDocSnap = await getDoc(pksDocRef); 
+    if (!ripenessDbAdmin) {
+        console.error("[TeamsList Server Load] Ripeness Admin DB tidak terinisialisasi!");
+        throw svelteKitError(503, "Layanan data tim tidak tersedia saat ini.");
+    }
+    const db = ripenessDbAdmin;
 
-        if (!pksDocSnap.exists()) { // Gunakan pksDocSnap
+    console.log(`[TeamsList Server Load] Memuat tim untuk PKS ID: ${pksId} di company: ${userSession.ripenessCompanyId}`);
+
+    try {
+        // 1. Verifikasi PKS dan dapatkan namanya
+        const pksDocRef = db.collection('pks').doc(pksId);
+        const pksDocSnap = await pksDocRef.get();
+
+        if (!pksDocSnap.exists) {
             throw svelteKitError(404, `PKS dengan ID ${pksId} tidak ditemukan.`);
         }
-        const pksData = pksDocSnap.data(); // Gunakan pksDocSnap
-        // Validasi apakah PKS ini milik company user yang login
+        const pksData = pksDocSnap.data() as PKS; // Cast ke tipe PKS
         if (pksData?.companyId !== userSession.ripenessCompanyId) {
-             throw svelteKitError(403, `Anda tidak memiliki akses ke PKS ini.`);
+            throw svelteKitError(403, `Anda tidak memiliki akses ke PKS ini.`);
         }
-        const namaPKS = pksData?.pksName || `PKS (${pksId})`;
+        const namaPKS = pksData?.pksName || `PKS (${pksId.substring(0,6)})`;
 
-        const teamsColRef = collection(pksDocRef, 'teams'); // Subkoleksi dari pksDocRef
-        const teamsQuery = query(teamsColRef, orderBy('teamName', 'asc'));
-        const teamsSnapshot = await getDocs(teamsQuery);
+        // 2. Ambil daftar tim dari subkoleksi PKS
+        const teamsColRef = db.collection(`pks/${pksId}/teams`);
+        const teamsQuery = teamsColRef.orderBy('teamName', 'asc');
+        const teamsSnapshot = await teamsQuery.get();
 
         if (teamsSnapshot.empty) {
             return {
@@ -57,37 +70,37 @@ export const load: PageServerLoad = async ({ params, locals }) => {
             };
         }
 
-        const teamList = teamsSnapshot.docs.map((teamDoc: QueryDocumentSnapshot) => { // PERBAIKAN: Gunakan QueryDocumentSnapshot
+        const teamList = teamsSnapshot.docs.map((teamDoc) => {
             const data = teamDoc.data();
             let membersCount = 0;
-            if (Array.isArray(data.members)) {
-                membersCount = data.members.length;
+            if (Array.isArray(data.membersIdList)) { // Pastikan field members adalah membersIdList sesuai tipe
+                membersCount = data.membersIdList.length;
+            } else if (Array.isArray(data.members)) { // Fallback jika fieldnya 'members'
+                 membersCount = data.members.length;
             }
-            let formattedLastReport = 'Belum ada laporan';
-            if (data.lastReport && typeof (data.lastReport as FirebaseTimestampType).toDate === 'function') {
-                const date = (data.lastReport as FirebaseTimestampType).toDate();
-                formattedLastReport = date.toLocaleDateString('id-ID', {
-                    day: 'numeric', month: 'long', year: 'numeric',
-                    hour: '2-digit', minute: '2-digit'
-                });
-            }
+
+            const lastReportTimestamp = data.lastReport as admin.firestore.Timestamp | undefined;
+
             return {
                 id: teamDoc.id,
-                teamName: data.teamName || `Tim (${teamDoc.id})`,
+                teamName: data.teamName || `Tim Tanpa Nama (${teamDoc.id.substring(0,6)})`,
                 membersCount: membersCount,
-                lastReport: formattedLastReport,
-            } as PKSTeam;
+                lastReport: formatAdminTimestampToDisplay(lastReportTimestamp),
+                // Anda bisa menambahkan originalLastReport (ISO string) jika perlu pengurutan lebih lanjut di klien
+                // originalLastReport: lastReportTimestamp ? lastReportTimestamp.toDate().toISOString() : null,
+            } as PKSTeam; // Pastikan tipe PKSTeam sesuai
         });
 
         return {
             pksId: pksId,
             namaPKS: namaPKS,
-            teamList: teamList
+            teamList: teamList,
+            message: null
         };
 
-    } catch (errorObj: any) {
-        console.error(`Error mengambil daftar tim untuk PKS ${pksId}:`, errorObj);
-        if (errorObj.status) throw errorObj;
-        throw svelteKitError(500, `Gagal memuat daftar tim: ${errorObj.message}`);
+    } catch (error: any) {
+        console.error(`[TeamsList Server Load] Error mengambil daftar tim untuk PKS ${pksId}:`, error);
+        if (error.status) throw error; // Jika sudah SvelteKitError, lempar lagi
+        throw svelteKitError(500, `Gagal memuat daftar tim: ${error.message}`);
     }
 };

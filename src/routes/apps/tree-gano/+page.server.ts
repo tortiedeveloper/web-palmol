@@ -1,54 +1,71 @@
 // src/routes/apps/tree-gano/+page.server.ts
-import { ganoAIDb } from '$lib/firebase/ganoAIClient';
-import { collection, query, where, getDocs, orderBy, type Timestamp as FirebaseTimestampType } from 'firebase/firestore';
-import { redirect } from '@sveltejs/kit';
-import type { PageServerLoadEvent, PageServerLoad } from './$types';
-import type { Tree, User, FirebaseTimestamp, TreeDate, UserSessionData } from '$lib/types';
+import { redirect, error as svelteKitError } from '@sveltejs/kit';
+import type { PageServerLoad } from './$types';
+import type { Tree, User, UserSessionData } from '$lib/types';
+import { ganoAIDbAdmin } from '$lib/server/adminGanoAI'; // Menggunakan Admin SDK
+import admin from 'firebase-admin'; // Untuk tipe Timestamp Admin SDK
 
-
-function serializeTimestamp(timestamp: FirebaseTimestampType | undefined | null): string | null {
+// Helper untuk serialisasi Firebase Admin Timestamp
+function serializeAdminTimestamp(timestamp: admin.firestore.Timestamp | undefined | null): string | null {
     if (timestamp && typeof timestamp.toDate === 'function') {
         return timestamp.toDate().toISOString();
     }
     return null;
 }
 
-function formatDisplayDate(timestamp: FirebaseTimestampType | undefined | null): string {
-    if (!timestamp || !timestamp.toDate) return 'N/A';
-    return timestamp.toDate().toLocaleDateString('id-ID', {
-        year: 'numeric', month: 'short', day: 'numeric'
-    });
+// Helper untuk format tanggal tampilan
+function formatDisplayDate(isoDateString: string | null | undefined): string {
+    if (!isoDateString) return 'N/A';
+    try {
+        return new Date(isoDateString).toLocaleDateString('id-ID', {
+            year: 'numeric', month: 'short', day: 'numeric'
+        });
+    } catch (e) {
+        return 'Invalid Date';
+    }
 }
 
-export const load: PageServerLoad = async (event: PageServerLoadEvent) => {
-    const userSession = event.locals.user as UserSessionData | undefined;
+export const load: PageServerLoad = async ({ locals }) => {
+    const userSession = locals.user as UserSessionData | undefined;
 
-    if (!userSession || !userSession.hasGanoAIAccess || !userSession.ganoAICompanyId) {
-        console.warn("[TreeGano Load] Sesi GanoAI tidak valid atau companyId tidak ada, redirecting ke login.");
+    if (!userSession?.hasGanoAIAccess || !userSession.ganoAICompanyId) {
+        console.warn("[TreeGano Server Load] Sesi GanoAI tidak valid atau ganoAICompanyId tidak ada, redirecting.");
         throw redirect(303, '/auth/sign-in');
     }
     const companyIdToLoad = userSession.ganoAICompanyId;
 
-    console.log(`[TreeGano Load] Memuat data pohon untuk perusahaan ID GanoAI: ${companyIdToLoad}`);
+    if (!ganoAIDbAdmin) {
+        console.error("[TreeGano Server Load] GanoAI Admin DB tidak terinisialisasi!");
+        throw svelteKitError(503, "Layanan data pohon GanoAI tidak tersedia saat ini.");
+    }
+
+    console.log(`[TreeGano Server Load] Memuat data pohon untuk perusahaan GanoAI ID: ${companyIdToLoad}`);
 
     try {
+        // 1. Ambil data pengguna untuk mapping userName
         const usersMap = new Map<string, string>();
-        const usersColRef = collection(ganoAIDb, 'users');
-        const companyUsersQuery = query(usersColRef, where('companyId', '==', companyIdToLoad));
-        const usersSnapshot = await getDocs(companyUsersQuery);
+        const usersColRef = ganoAIDbAdmin.collection('users'); // Asumsi koleksi 'users' di GanoAI
+        const companyUsersQuery = usersColRef.where('companyId', '==', companyIdToLoad);
+        const usersSnapshot = await companyUsersQuery.get();
         usersSnapshot.forEach(userDoc => {
-            const userData = userDoc.data() as User;
+            const userData = userDoc.data();
             usersMap.set(userDoc.id, userData.name || 'Tanpa Nama');
         });
 
-        const treesColRef = collection(ganoAIDb, `company/${companyIdToLoad}/tree`);
-        const q = query(treesColRef, orderBy('name', 'asc'));
-        
-        const querySnapshot = await getDocs(q);
+        // 2. Ambil data pohon
+        const treesColRef = ganoAIDbAdmin.collection(`company/${companyIdToLoad}/tree`);
+        const q = treesColRef.orderBy('name', 'asc');
+        const querySnapshot = await q.get();
         const treesList: Tree[] = [];
-        
+
         querySnapshot.forEach((doc) => {
             const data = doc.data();
+            const createdDate = data.date?.createdDate as admin.firestore.Timestamp | undefined;
+            const updatedDate = data.date?.updatedDate as admin.firestore.Timestamp | undefined;
+
+            const createdDateISO = serializeAdminTimestamp(createdDate);
+            const updatedDateISO = serializeAdminTimestamp(updatedDate);
+
             const serializableTree: Tree = {
                 id: doc.id,
                 companyId: data.companyId,
@@ -58,28 +75,27 @@ export const load: PageServerLoad = async (event: PageServerLoadEvent) => {
                 last_status: data.last_status,
                 location: data.location,
                 userId: data.userId,
-                userName: data.userId ? usersMap.get(data.userId) || data.userId : 'Tidak Diketahui',
-                date: {
-                    createdDate: serializeTimestamp(data.date?.createdDate as FirebaseTimestampType | undefined),
-                    updatedDate: serializeTimestamp(data.date?.updatedDate as FirebaseTimestampType | undefined),
+                userName: data.userId ? (usersMap.get(data.userId) || data.userId) : 'Tidak Diketahui',
+                date: { // Simpan sebagai ISO string atau null
+                    createdDate: createdDateISO,
+                    updatedDate: updatedDateISO,
                 },
-                createdDateFormatted: formatDisplayDate(data.date?.createdDate as FirebaseTimestampType | undefined),
-                updatedDateFormatted: formatDisplayDate(data.date?.updatedDate as FirebaseTimestampType | undefined),
+                // Field *_formatted untuk tampilan langsung jika diperlukan
+                createdDateFormatted: formatDisplayDate(createdDateISO),
+                updatedDateFormatted: formatDisplayDate(updatedDateISO),
+                // fruitCounts tidak relevan untuk GanoAI, jadi bisa diabaikan atau pastikan tipenya opsional
             };
             treesList.push(serializableTree);
         });
 
         return {
             trees: treesList,
-            companyId: companyIdToLoad
+            companyId: companyIdToLoad, // ganoAICompanyId
+            message: treesList.length === 0 ? 'Tidak ada data pohon untuk perusahaan ini.' : null
         };
 
     } catch (error: any) {
-        console.error(`Error loading trees for company ${companyIdToLoad} di tree-gano:`, error);
-        return {
-            trees: [],
-            companyId: companyIdToLoad,
-            error: `Gagal memuat data pohon: ${error.message}`
-        };
+        console.error(`[TreeGano Server Load] Gagal memuat pohon untuk GanoAI company ${companyIdToLoad}:`, error);
+        throw svelteKitError(500, `Gagal memuat data pohon GanoAI: ${error.message}`);
     }
 };

@@ -138,11 +138,18 @@ export interface TimelineEventType {
     description: string;
     imageUrl?: string;
     reportedBy?: string;
+    originalDateISO?: string;
 }
 
 export interface TimelineDataType {
     date: string;
     events: TimelineEventType[];
+}
+
+export interface PKSRawDates { // Atau nama apa pun yang Anda gunakan, misal TreeDate
+    createdDate: string | null;     // UBAH DARI FirebaseTimestamp menjadi string | null
+    updatedDate: string | null;     // UBAH DARI FirebaseTimestamp menjadi string | null
+    validDate?: string | null;    // UBAH DARI FirebaseTimestamp menjadi string | null (jika opsional)
 }
 
 // Tipe untuk Menu (dari template Anda)
@@ -210,6 +217,8 @@ export interface UserSessionData {
     ripenessUserId?: string;
     ripenessCompanyId?: string;
     hasRipenessAccess: boolean;
+
+    accountActive?: boolean;
 }
 
 // Tipe untuk Item Menu di TopBar
@@ -250,11 +259,7 @@ export interface PKS extends FormattedDates {
     phoneNumber?: string;
     location?: GeoLocation;
     membership?: string;
-    date?: { // Objek date mentah dari Firestore jika perlu
-        createdDate: FirebaseTimestamp;
-        updatedDate: FirebaseTimestamp;
-        validDate?: FirebaseTimestamp;
-    };
+    date?: PKSRawDates;
 }
 
 export interface PKSTeam {
@@ -265,7 +270,7 @@ export interface PKSTeam {
     populatedMembersList?: PopulatedMemberInfo[];
     lastReport?: string; // Tanggal string yang sudah diformat
     // Field date mentah jika perlu
-    originalLastReport?: FirebaseTimestamp; 
+    originalLastReport?: string | null; 
 }
 
 export interface PopulatedMemberInfo { // Buat tipe ini jika belum ada

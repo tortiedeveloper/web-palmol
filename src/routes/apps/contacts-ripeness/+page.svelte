@@ -2,18 +2,22 @@
     import DefaultLayout from "$lib/layouts/DefaultLayout.svelte";
     import PageBreadcrumb from "$lib/components/PageBreadcrumb.svelte";
     import { Col, Row, Input, Button, ButtonGroup, Table, Modal, ModalHeader, ModalBody, Alert, Card, CardBody } from "@sveltestrap/sveltestrap";
-    // Pastikan path ke ContactCard benar, jika Anda menyalin folder components ke dalam contacts-ripeness
-    import ContactCard from "./components/ContactCard.svelte"; 
-    import type { User, FirebaseTimestamp } from "$lib/types";
-    import type { PageData } from './$types';
+    import ContactCard from "./components/ContactCard.svelte";
+    import type { User, AppError } from "$lib/types";
+    import type { PageData } from './$types'; // PageData akan diinferensikan oleh SvelteKit
     import Icon from '@iconify/svelte';
+    import { page } from '$app/stores';
 
     export let data: PageData;
 
+    $: layoutPageData = {
+        userSession: $page.data.userSession,
+        menuItemsForLayout: $page.data.menuItemsForLayout
+    };
+
     let users: User[] = [];
-    // companyId di sini akan menjadi ripenessCompanyId dari server, tapi nama variabel lokalnya companyId
-    let companyId: string | null = null; 
-    let errorLoading: string | undefined = undefined;
+    let activeCompanyId: string | null = null;
+    let serverMessage: string | null | undefined;
 
     let searchTerm = "";
     let viewMode: 'card' | 'table' = 'card';
@@ -23,13 +27,24 @@
 
     const defaultAvatarPath = '/images/users/avatar-default.png';
 
-    $: {
-        users = data.users || [];
-        companyId = data.companyId || null; // Ini akan berisi ripenessCompanyId dari load function
-        errorLoading = data.error;
+    function initializeState(currentPageData: PageData) {
+        users = currentPageData.users || [];
+        activeCompanyId = currentPageData.companyId || null;
+        // PERBAIKAN: Akses pageData.message secara opsional
+        // Jika 'message' ada di tipe PageData yang benar, ini akan berfungsi.
+        // Jika tidak, ia akan menjadi undefined dan tidak menyebabkan error saat kompilasi.
+        serverMessage = (currentPageData as any).message || null;
     }
 
-    $: filteredUsers = users.filter(user => 
+    // Inisialisasi dari data prop awal
+    initializeState(data);
+
+    // Reaksi terhadap perubahan data dari server
+    $: initializeState(data);
+
+    $: criticalError = $page.error as AppError | null;
+
+    $: filteredUsers = users.filter(user =>
         user.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         user.email?.toLowerCase().includes(searchTerm.toLowerCase())
     );
@@ -64,115 +79,122 @@
     }
 </script>
 
-<DefaultLayout {data}> 
-    <PageBreadcrumb title="Daftar Pengguna (SawitHarvest)" subTitle="Aplikasi Ripeness" />
+<DefaultLayout data={layoutPageData}>
+    <PageBreadcrumb title="Pengguna Ripeness (SawitHarvest)" subTitle="Aplikasi Ripeness" />
 
-    {#if errorLoading}
-        <Alert color="danger" class="mt-2">{errorLoading}</Alert>
+    {#if criticalError}
+        <Alert color="danger" class="mt-2">{criticalError.message || 'Terjadi kesalahan server.'}</Alert>
     {/if}
 
     <Card class="mt-3">
         <CardBody>
             <Row class="mb-3 gy-2 align-items-center">
                 <Col md="8">
-                    <Input 
-                        type="text" 
-                        placeholder="Cari pengguna berdasarkan nama atau email..." 
+                    <Input
+                        type="text"
+                        placeholder="Cari pengguna berdasarkan nama atau email..."
                         bind:value={searchTerm}
                         class="form-control-sm"
+                        disabled={criticalError != null}
                     />
                 </Col>
                 <Col md="4" class="text-md-end">
                     <ButtonGroup size="sm">
-                        <Button 
-                            color="primary" 
-                            outline={viewMode !== 'card'} 
+                        <Button
+                            color="primary"
+                            outline={viewMode !== 'card'}
                             on:click={() => viewMode = 'card'}
-                            title="Tampilan Kartu">
+                            title="Tampilan Kartu"
+                            disabled={criticalError != null}
+                        >
                             <Icon icon="mdi:view-grid-outline" />
                         </Button>
-                        <Button 
-                            color="primary" 
-                            outline={viewMode !== 'table'} 
+                        <Button
+                            color="primary"
+                            outline={viewMode !== 'table'}
                             on:click={() => viewMode = 'table'}
-                            title="Tampilan Tabel">
+                            title="Tampilan Tabel"
+                            disabled={criticalError != null}
+                        >
                             <Icon icon="mdi:view-list-outline" />
                         </Button>
                     </ButtonGroup>
                 </Col>
             </Row>
 
-            {#if viewMode === 'card'}
-                <Row class="row-cols-1 row-cols-sm-2 row-cols-lg-3 row-cols-xl-4 g-3">
-                    {#each filteredUsers as user (user.id)}
-                        <Col class="d-flex align-items-stretch"> 
-                            <ContactCard {user} onViewProfile={openUserProfileModal} class="w-100"/>
-                        </Col>
-                    {:else}
-                        <Col>
-                            <p class="text-muted text-center mt-4">
-                                {#if users.length === 0 && !errorLoading}
-                                    Tidak ada pengguna untuk perusahaan Ripeness ini.
-                                {:else if filteredUsers.length === 0 && searchTerm !== ""}
-                                    Pengguna dengan nama atau email "{searchTerm}" tidak ditemukan.
-                                {:else if !errorLoading}
-                                    Memuat data pengguna...
-                                {/if}
-                            </p>
-                        </Col>
-                    {/each}
-                </Row>
-            {/if}
+            {#if !criticalError}
+                {#if viewMode === 'card'}
+                    <Row class="row-cols-1 row-cols-sm-2 row-cols-lg-3 row-cols-xl-4 g-3">
+                        {#each filteredUsers as user (user.id)}
+                            <Col class="d-flex align-items-stretch">
+                                <ContactCard {user} onViewProfile={openUserProfileModal} class="w-100"/>
+                            </Col>
+                        {:else}
+                            <Col>
+                                <p class="text-muted text-center mt-4">
+                                    {#if serverMessage && users.length === 0}
+                                        {serverMessage}
+                                    {:else if users.length === 0}
+                                        Tidak ada pengguna untuk perusahaan Ripeness ini.
+                                    {:else if filteredUsers.length === 0 && searchTerm !== ""}
+                                        Pengguna dengan nama atau email "{searchTerm}" tidak ditemukan.
+                                    {/if}
+                                </p>
+                            </Col>
+                        {/each}
+                    </Row>
+                {/if}
 
-            {#if viewMode === 'table'}
-                {#if filteredUsers.length > 0}
-                <div class="table-responsive">
-                    <Table hover class="table-sm align-middle">
-                        <thead class="table-light">
-                            <tr>
-                                <th style="width: 70px;">Avatar</th>
-                                <th>Nama</th>
-                                <th>Email</th>
-                                <th>No. Telepon</th>
-                                <th>Alamat</th>
-                                <th class="text-center">Aksi</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {#each filteredUsers as user (user.id)}
+                {#if viewMode === 'table'}
+                    {#if filteredUsers.length > 0}
+                    <div class="table-responsive">
+                        <Table hover class="table-sm align-middle">
+                            <thead class="table-light">
                                 <tr>
-                                    <td>
-                                        <img 
-                                            src={user.avatar || defaultAvatarPath} 
-                                            alt={user.name} 
-                                            class="rounded-circle avatar-sm"
-                                            on:error={handleImageError}
-                                        />
-                                    </td>
-                                    <td>{user.name || '-'}</td>
-                                    <td>{user.email || '-'}</td>
-                                    <td>{user.phoneNumber || '-'}</td>
-                                    <td>{user.address || '-'}</td>
-                                    <td class="text-center">
-                                        <Button size="sm" color="light" on:click={() => openUserProfileModal(user)} title="Lihat Profil">
-                                            <Icon icon="mdi:eye-outline"/>
-                                        </Button>
-                                    </td>
+                                    <th style="width: 70px;">Avatar</th>
+                                    <th>Nama</th>
+                                    <th>Email</th>
+                                    <th>No. Telepon</th>
+                                    <th>Alamat</th>
+                                    <th class="text-center">Aksi</th>
                                 </tr>
-                            {/each}
-                        </tbody>
-                    </Table>
-                </div>
-                {:else}
-                     <p class="text-muted text-center mt-4">
-                        {#if users.length === 0 && !errorLoading}
-                            Tidak ada pengguna untuk perusahaan Ripeness ini.
-                        {:else if filteredUsers.length === 0 && searchTerm !== ""}
-                            Pengguna dengan nama atau email "{searchTerm}" tidak ditemukan.
-                        {:else if !errorLoading}
-                             Memuat data pengguna...
-                        {/if}
-                    </p>
+                            </thead>
+                            <tbody>
+                                {#each filteredUsers as user (user.id)}
+                                    <tr>
+                                        <td>
+                                            <img
+                                                src={user.avatar || defaultAvatarPath}
+                                                alt={user.name}
+                                                class="rounded-circle avatar-sm"
+                                                on:error={handleImageError}
+                                            />
+                                        </td>
+                                        <td>{user.name || '-'}</td>
+                                        <td>{user.email || '-'}</td>
+                                        <td>{user.phoneNumber || '-'}</td>
+                                        <td>{user.address || '-'}</td>
+                                        <td class="text-center">
+                                            <Button size="sm" color="light" on:click={() => openUserProfileModal(user)} title="Lihat Profil">
+                                                <Icon icon="mdi:eye-outline"/>
+                                            </Button>
+                                        </td>
+                                    </tr>
+                                {/each}
+                            </tbody>
+                        </Table>
+                    </div>
+                    {:else}
+                        <p class="text-muted text-center mt-4">
+                            {#if serverMessage && users.length === 0}
+                                {serverMessage}
+                            {:else if users.length === 0}
+                                Tidak ada pengguna untuk perusahaan Ripeness ini.
+                            {:else if filteredUsers.length === 0 && searchTerm !== ""}
+                                Pengguna dengan nama atau email "{searchTerm}" tidak ditemukan.
+                            {/if}
+                        </p>
+                    {/if}
                 {/if}
             {/if}
         </CardBody>
@@ -189,10 +211,10 @@
             <ModalBody class="p-4">
                 <Row>
                     <Col md="4" class="text-center mb-3 mb-md-0">
-                        <img 
-                            src={selectedUserForModal.avatar || defaultAvatarPath} 
-                            alt={selectedUserForModal.name} 
-                            class="img-thumbnail rounded-circle shadow-sm" 
+                        <img
+                            src={selectedUserForModal.avatar || defaultAvatarPath}
+                            alt={selectedUserForModal.name}
+                            class="img-thumbnail rounded-circle shadow-sm"
                             style="width: 150px; height: 150px; object-fit: cover;"
                             on:error={handleImageError}
                         />
@@ -220,8 +242,13 @@
                         </div>
                         <div class="mb-2">
                             <Icon icon="mdi:update" class="me-2 text-muted" style="vertical-align: -2px;"/>
-                            <span class="text-muted me-1">Terakhir Update Data:</span>
+                            <span class="text-muted me-1">Update Terakhir:</span>
                             <strong>{formatDate(selectedUserForModal.lastUpdated)}</strong>
+                        </div>
+                         <div class="mb-2">
+                            <Icon icon="mdi:calendar-account-outline" class="me-2 text-muted" style="vertical-align: -2px;"/>
+                            <span class="text-muted me-1">Dibuat:</span>
+                            <strong>{formatDate(selectedUserForModal.date?.createdDate)}</strong>
                         </div>
                         <div class="mb-2">
                             <Icon icon="mdi:account-key-outline" class="me-2 text-muted" style="vertical-align: -2px;"/>

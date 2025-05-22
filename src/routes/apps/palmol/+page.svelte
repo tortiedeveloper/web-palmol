@@ -2,24 +2,39 @@
     import DefaultLayout from "$lib/layouts/DefaultLayout.svelte";
     import PageBreadcrumb from "$lib/components/PageBreadcrumb.svelte";
     import { page } from '$app/stores';
-    import type { PageData } from './$types';
-    import type { PKS } from '$lib/types';
-    import { Card, CardBody, CardTitle, CardSubtitle, CardText, Button, Row, Col, Alert, Spinner, Badge } from "@sveltestrap/sveltestrap";
+    import type { PageData } from './$types'; // Akan mengambil tipe dari +page.server.ts
+    import type { PKS, AppError, UserSessionData, MenuItemType } from '$lib/types'; // Impor AppError, UserSessionData, MenuItemType
+    import { Card, CardBody, CardTitle, Button, Row, Col, Alert, Spinner, Badge } from "@sveltestrap/sveltestrap"; // CardSubtitle, CardText dihapus jika tidak digunakan
     import Icon from '@iconify/svelte';
+    // Tidak ada lagi impor firebase client di sini
 
     export let data: PageData;
 
-    let pksList: PKS[] = [];
-    let messageFromServer: string | undefined | null = undefined;
-    
-    $: if (data) {
-        pksList = data.pksList || [];
-        messageFromServer = data.message;
-    }
-    
-    $: serverError = $page.error;
+    // Data untuk DefaultLayout dari root layout
+    let layoutPageData: { userSession: UserSessionData | undefined; menuItemsForLayout: MenuItemType[] };
+    $: layoutPageData = {
+        userSession: $page.data.userSession as UserSessionData | undefined,
+        menuItemsForLayout: ($page.data.menuItemsForLayout as MenuItemType[]) || []
+    };
 
-    const defaultPksImage = '/images/pks/default-pks.png'; 
+    let pksList: PKS[] = [];
+    let messageFromServer: string | null | undefined = undefined; // Untuk pesan seperti "Tidak ada PKS"
+
+    // Mengambil error kritis dari SvelteKit
+    $: criticalError = $page.error as AppError | null;
+
+    // Reaksi terhadap perubahan data dari server
+    $: {
+        if (data && !criticalError) {
+            pksList = data.pksList || [];
+            messageFromServer = data.message; // Pesan dari server, bisa null
+        } else if (criticalError) {
+            pksList = []; // Kosongkan list jika ada error kritis
+            messageFromServer = null;
+        }
+    }
+
+    const defaultPksImage = '/images/pks/default-pks.png';
 
     function handleImageError(event: Event) {
         const target = event.target as HTMLImageElement;
@@ -29,44 +44,41 @@
     function getMembershipBadgeColor(membership?: string | null): string {
         if (!membership) return 'light';
         switch (membership.toLowerCase()) {
-            case 'premium': return 'warning'; // Kuning/Oranye untuk premium
-            case 'standard': return 'info';   // Biru untuk standard
-            default: return 'light';          // Abu-abu untuk lainnya atau none
+            case 'premium': return 'warning';
+            case 'standard': return 'info';
+            default: return 'light';
         }
     }
 </script>
 
-<DefaultLayout {data}>
-    <PageBreadcrumb title="Daftar PKS (Palmol)" subTitle="Aplikasi Ripeness"/>
+<DefaultLayout data={layoutPageData}>
+    <PageBreadcrumb title="Daftar PKS (Palmol)" subTitle="Aplikasi Palmol" />
 
     <div class="pt-3">
         <Row class="align-items-center mb-4">
             <Col>
-                <h1 class="h3 mb-0 text-dark">Pabrik Kelapa Sawit Anda</h1>
+                <h1 class="h3 mb-0 text-dark">Pabrik Kelapa Sawit Terdaftar</h1>
             </Col>
-        </Row>
+            </Row>
 
-        {#if serverError}
+        {#if criticalError}
             <Alert color="danger" class="shadow-sm">
-                <h4 class="alert-heading">Terjadi Kesalahan</h4>
-                <p>
-                    Tidak dapat memuat daftar PKS.
-                    {#if typeof serverError === 'object' && serverError !== null && 'message' in serverError}
-                        <br/><small>Detail: {serverError.message}</small>
-                    {/if}
-                </p>
+                <h4 class="alert-heading">
+                    <Icon icon="mdi:alert-octagon-outline" class="me-2"/>Terjadi Kesalahan Server
+                </h4>
+                <p>Tidak dapat memuat daftar PKS. <br/><small>Detail: {criticalError.message}</small></p>
             </Alert>
         {:else if pksList.length > 0}
             <Row class="row-cols-1 row-cols-md-2 row-cols-xl-3 g-4">
                 {#each pksList as pksItem (pksItem.id)}
                     <Col class="d-flex align-items-stretch">
                         <Card class="h-100 shadow-sm border-light card-hover-lift w-100">
-                            <a href={`/apps/palmol/${pksItem.id}/teams`} class="text-decoration-none d-flex flex-column h-100">
+                            <a href={`/apps/palmol/${pksItem.pksId || pksItem.id}/teams`} class="text-decoration-none d-flex flex-column h-100">
                                 <div style="height: 180px; overflow: hidden; background-color: #f0f2f5; border-top-left-radius: var(--bs-card-inner-border-radius); border-top-right-radius: var(--bs-card-inner-border-radius);">
                                     {#if pksItem.avatar}
-                                        <img 
-                                            src={pksItem.avatar} 
-                                            alt="Logo {pksItem.pksName}" 
+                                        <img
+                                            src={pksItem.avatar}
+                                            alt="Logo {pksItem.pksName}"
                                             class="card-img-top"
                                             style="object-fit: cover; width: 100%; height: 100%;"
                                             on:error={handleImageError}
@@ -88,7 +100,7 @@
                                             </Badge>
                                         {/if}
                                     </div>
-                                    
+
                                     {#if pksItem.address}
                                         <div class="d-flex align-items-center text-muted mb-1" style="font-size: 0.85rem;">
                                             <Icon icon="mdi:map-marker-outline" class="me-2 flex-shrink-0" style="font-size: 1rem;"/>
@@ -130,8 +142,7 @@
             </Row>
         {:else if messageFromServer}
             <Alert color="info" class="shadow-sm text-center">{messageFromServer}</Alert>
-        {:else}
-            <div class="text-center py-5">
+        {:else} <div class="text-center py-5">
                 <Spinner color="primary" style="width: 3rem; height: 3rem;"/>
                 <p class="mt-3 text-muted">Memuat daftar PKS Anda...</p>
             </div>

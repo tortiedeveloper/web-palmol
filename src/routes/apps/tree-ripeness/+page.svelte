@@ -1,27 +1,29 @@
 <script lang="ts">
     import DefaultLayout from "$lib/layouts/DefaultLayout.svelte";
     import PageBreadcrumb from "$lib/components/PageBreadcrumb.svelte";
-    import { 
-        Col, Row, Input, Button, ButtonGroup, Table, 
-        Modal, ModalHeader, ModalBody, Alert, Card, CardBody, CardTitle, Spinner, Badge 
+    import {
+        Col, Row, Input, Button, ButtonGroup, Table,
+        Modal, ModalHeader, ModalBody, Alert, Card, CardBody, Spinner, Badge
     } from "@sveltestrap/sveltestrap";
-    import TreeCard from "./components/TreeCard.svelte"; // Menggunakan TreeCard dari folder lokal tree-ripeness
+    import TreeCard from "./components/TreeCard.svelte"; // Pastikan path dan komponen TreeCard sesuai untuk Ripeness
     import LeftTimeline from "$lib/components/customTimeline/LeftTimeline.svelte";
-    
-    // Impor tipe FirebaseTimestamp dari $lib/types
-    import type { Tree, TreeRecord, User, FirebaseTimestamp, TimelineDataType, TimelineEventType, FruitCounts } from "$lib/types";
+
+    import type { Tree, TimelineDataType, TimelineEventType, AppError } from "$lib/types";
     import type { PageData } from './$types';
     import Icon from '@iconify/svelte';
-    // Ganti ganoAIDb menjadi ripenessDb untuk operasi client-side di halaman ini
-    import { ripenessDb } from '$lib/firebase/ripenessClient'; 
-    import { collection, query, where, getDocs, orderBy, doc, getDoc } from 'firebase/firestore';
+    import { page } from '$app/stores';
     import { tick } from "svelte";
 
     export let data: PageData;
 
+    $: layoutPageData = {
+        userSession: $page.data.userSession,
+        menuItemsForLayout: $page.data.menuItemsForLayout
+    };
+
     let allTrees: Tree[] = [];
-    let companyId: string | null = null;
-    let errorLoadingPage: string | undefined = undefined;
+    let activeCompanyId: string | null = null;
+    let serverMessage: string | null | undefined;
 
     let searchTerm = "";
     let viewMode: 'card' | 'table' = 'card';
@@ -33,16 +35,22 @@
     let selectedTreeForTimeline: Tree | null = null;
     let timelineDataForModal: TimelineDataType[] = [];
     let isLoadingTimeline = false;
+    let timelineError: string | null = null;
 
-    const defaultTreeImage = '/images/trees/default-tree.jpg';
+    const defaultTreeImage = '/images/trees/default-tree.jpg'; // Sesuaikan jika perlu
 
-    $: {
-        allTrees = Array.isArray(data.trees) ? data.trees : [];
-        companyId = data.companyId || null;
-        errorLoadingPage = data.error;
+    function initializeState(currentPageData: PageData) {
+        allTrees = currentPageData.trees || [];
+        activeCompanyId = currentPageData.companyId || null;
+        serverMessage = (currentPageData as any).message || null; // Akses opsional
     }
 
-    $: filteredTrees = allTrees.filter(tree => 
+    initializeState(data);
+    $: initializeState(data);
+
+    $: criticalError = $page.error as AppError | null;
+
+    $: filteredTrees = allTrees.filter(tree =>
         tree.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         tree.id?.toLowerCase().includes(searchTerm.toLowerCase())
     );
@@ -54,98 +62,54 @@
 
     function togglePhotoModal() {
         isPhotoModalOpen = !isPhotoModalOpen;
-        if (!isPhotoModalOpen) {
-            selectedTreeForPhoto = null;
-        }
-    }
-    
-    const userNameCache = new Map<string, string>();
-    async function fetchUserName(userId: string): Promise<string> {
-        if (userNameCache.has(userId)) {
-            return userNameCache.get(userId)!;
-        }
-        try {
-            // Gunakan ripenessDb untuk mengambil data user dari project Ripeness
-            const userDocRef = doc(ripenessDb, 'users', userId); 
-            const userDocSnap = await getDoc(userDocRef);
-            if (userDocSnap.exists()) {
-                const userName = (userDocSnap.data() as User).name || userId;
-                userNameCache.set(userId, userName);
-                return userName;
-            }
-            userNameCache.set(userId, userId);
-            return userId;
-        } catch (e) {
-            console.error("Error fetching user name (Ripeness):", e);
-            userNameCache.set(userId, userId);
-            return userId;
-        }
+        if (!isPhotoModalOpen) selectedTreeForPhoto = null;
     }
 
     async function openTimelineModalHandler(tree: Tree) {
-        if (!companyId || !tree.id) return;
+        if (!activeCompanyId || !tree.id) {
+            timelineError = "Informasi perusahaan atau pohon tidak lengkap.";
+            return;
+        }
         selectedTreeForTimeline = tree;
         isTimelineModalOpen = true;
         isLoadingTimeline = true;
         timelineDataForModal = [];
+        timelineError = null;
 
         try {
-            const recordsRef = collection(ripenessDb, `company/${companyId}/tree/${tree.id}/record`); // Gunakan ripenessDb
-            const recordsQuery = query(recordsRef, orderBy("date.createdDate", "desc"));
-            const recordsSnapshot = await getDocs(recordsQuery);
-            const formattedRecords: Record<string, TimelineEventType[]> = {};
-
-            for (const recordDoc of recordsSnapshot.docs) {
-                const record = { id: recordDoc.id, ...recordDoc.data() } as TreeRecord;
-                // PERBAIKAN: Gunakan tipe FirebaseTimestamp yang sudah diimpor
-                const recordCreatedDateFirestore = record.date?.createdDate as unknown as FirebaseTimestamp | undefined;
-                
-                if (!recordCreatedDateFirestore || typeof recordCreatedDateFirestore.toDate !== 'function') {
-                    console.warn(`[TreeRipeness Timeline] Invalid or missing createdDate for record ${record.id}`);
-                    continue;
-                }
-                const recordCreatedDate = recordCreatedDateFirestore.toDate();
-
-                const dateKey = recordCreatedDate.toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' });
-                if (!formattedRecords[dateKey]) {
-                    formattedRecords[dateKey] = [];
-                }
-
-                let reportedBy = record.userId ? 'Memuat...' : 'Sistem';
-                if (record.userId) {
-                    reportedBy = await fetchUserName(record.userId);
-                }
-                
-                let eventTitle = "Update Kematangan Buah";
-                let eventBadge: string | undefined = undefined;
-
-                if(record.fruitCounts){
-                    eventTitle = `Matang: ${record.fruitCounts.matang}, Mentah: ${record.fruitCounts.belumMatang}, Busuk: ${record.fruitCounts.terlaluMatang}`;
-                } else if (record.status) { // Jika ada field status di record Ripeness (misalnya "Panen")
-                    eventTitle = record.status; // Anda bisa memetakan ini juga
-                    eventBadge = record.status;
-                }
-
-                formattedRecords[dateKey].push({
-                    title: eventTitle,
-                    description: record.description || "Tidak ada deskripsi.",
-                    badge: eventBadge,
-                    imageUrl: record.img,
-                    reportedBy: reportedBy
-                });
+            // Panggil API endpoint baru untuk Ripeness
+            const response = await fetch(`/api/ripeness-tree-records/${activeCompanyId}/${tree.id}.json`);
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({ message: `Gagal memuat riwayat: ${response.statusText}` }));
+                throw new Error(errData.message || `HTTP error ${response.status}`);
             }
-            timelineDataForModal = Object.entries(formattedRecords).map(([dateStr, events]) => ({ date: dateStr, events }));
-        } catch (err) {
-            console.error("Error fetching tree records for Ripeness:", err);
+            const result: { timelineEvents: TimelineEventType[] } = await response.json();
+
+            const formattedRecords: Record<string, TimelineEventType[]> = {};
+            result.timelineEvents.forEach(event => {
+                if (event.originalDateISO) {
+                    const dateKey = new Date(event.originalDateISO).toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' });
+                    if (!formattedRecords[dateKey]) {
+                        formattedRecords[dateKey] = [];
+                    }
+                    formattedRecords[dateKey].push(event);
+                } else {
+                    console.warn("Ripeness timeline event missing originalDateISO:", event);
+                }
+            });
+            timelineDataForModal = Object.entries(formattedRecords)
+                .map(([dateStr, events]) => ({ date: dateStr, events }))
+                .sort((a,b) => new Date(b.events[0]?.originalDateISO ?? 0).getTime() - new Date(a.events[0]?.originalDateISO ?? 0).getTime());
+
+        } catch (err: any) {
+            console.error("Error fetching Ripeness tree timeline:", err);
+            timelineError = err.message || "Gagal memuat riwayat pohon Ripeness.";
         } finally {
             isLoadingTimeline = false;
             await tick();
         }
     }
-    
-    // Fungsi getStatusDisplay ini lebih cocok untuk GanoAI. Untuk Ripeness, kita tampilkan fruitCounts di tabel.
-    // Jika Anda ingin badge status umum di tabel Ripeness (misalnya berdasarkan apakah ada buah matang),
-    // Anda bisa membuat fungsi baru atau mengadaptasi ini.
+
     function getRipenessTreeTableStatus(tree: Tree | undefined): { text: string, color: string, icon: string } {
         if (!tree || !tree.fruitCounts) return { text: 'N/A', color: 'secondary', icon: 'mdi:help-circle-outline' };
         const fc = tree.fruitCounts;
@@ -160,6 +124,7 @@
         if (!isTimelineModalOpen) {
             selectedTreeForTimeline = null;
             timelineDataForModal = [];
+            timelineError = null;
         }
     }
 
@@ -169,95 +134,120 @@
     }
 </script>
 
-<DefaultLayout {data}>
-    <PageBreadcrumb title="Data Pohon (SawitHarvest)" subTitle="Aplikasi Ripeness" />
+<DefaultLayout data={layoutPageData}>
+    <PageBreadcrumb title="Data Pohon Ripeness (SawitHarvest)" subTitle="Aplikasi Ripeness" />
 
-    {#if errorLoadingPage}
-        <Alert color="danger" class="mt-2">{errorLoadingPage}</Alert>
+    {#if criticalError}
+        <Alert color="danger" class="mt-2">{criticalError.message || 'Terjadi kesalahan server.'}</Alert>
     {/if}
 
     <Card class="mt-3">
         <CardBody>
             <Row class="mb-3 gy-2 align-items-center">
                 <Col sm="8" md="9">
-                    <Input 
-                        type="text" 
-                        placeholder="Cari pohon berdasarkan nama atau ID..." 
+                    <Input
+                        type="text"
+                        placeholder="Cari pohon berdasarkan nama atau ID..."
                         bind:value={searchTerm}
                         class="form-control-sm"
+                        disabled={criticalError != null}
                     />
                 </Col>
                 <Col sm="4" md="3" class="text-sm-end">
                     <ButtonGroup size="sm">
-                        <Button color="primary" outline={viewMode !== 'card'} on:click={() => viewMode = 'card'} title="Tampilan Kartu"><Icon icon="mdi:view-grid-outline" /></Button>
-                        <Button color="primary" outline={viewMode !== 'table'} on:click={() => viewMode = 'table'} title="Tampilan Tabel"><Icon icon="mdi:view-list-outline" /></Button>
+                        <Button color="primary" outline={viewMode !== 'card'} on:click={() => viewMode = 'card'} title="Tampilan Kartu" disabled={criticalError != null}>
+                            <Icon icon="mdi:view-grid-outline" />
+                        </Button>
+                        <Button color="primary" outline={viewMode !== 'table'} on:click={() => viewMode = 'table'} title="Tampilan Tabel" disabled={criticalError != null}>
+                            <Icon icon="mdi:view-list-outline" />
+                        </Button>
                     </ButtonGroup>
                 </Col>
             </Row>
 
-            {#if viewMode === 'card'}
-                <Row class="row-cols-1 row-cols-sm-2 row-cols-lg-3 row-cols-xl-4 g-3">
-                    {#each filteredTrees as tree (tree.id)}
-                        <Col class="d-flex align-items-stretch">
-                            <TreeCard {tree} onViewPhoto={openPhotoModalHandler} onViewTimeline={openTimelineModalHandler} class="w-100"/>
-                        </Col>
-                    {:else}
-                        <Col><p class="text-muted text-center mt-4">{#if allTrees.length === 0 && !errorLoadingPage}Tidak ada data pohon.{:else if filteredTrees.length === 0 && searchTerm !== ""}Pohon "{searchTerm}" tidak ditemukan.{:else if !errorLoadingPage}Memuat...{/if}</p></Col>
-                    {/each}
-                </Row>
-            {/if}
+            {#if !criticalError}
+                {#if viewMode === 'card'}
+                    <Row class="row-cols-1 row-cols-sm-2 row-cols-lg-3 row-cols-xl-4 g-3">
+                        {#each filteredTrees as tree (tree.id)}
+                            <Col class="d-flex align-items-stretch">
+                                <TreeCard {tree} onViewPhoto={openPhotoModalHandler} onViewTimeline={openTimelineModalHandler} class="w-100"/>
+                            </Col>
+                        {:else}
+                            <Col>
+                                <p class="text-muted text-center mt-4">
+                                    {#if serverMessage && allTrees.length === 0}
+                                        {serverMessage}
+                                    {:else if allTrees.length === 0}
+                                        Tidak ada data pohon untuk perusahaan Ripeness ini.
+                                    {:else if filteredTrees.length === 0 && searchTerm !== ""}
+                                        Pohon dengan nama atau ID "{searchTerm}" tidak ditemukan.
+                                    {/if}
+                                </p>
+                            </Col>
+                        {/each}
+                    </Row>
+                {/if}
 
-            {#if viewMode === 'table'}
-                {#if filteredTrees.length > 0}
-                <div class="table-responsive">
-                    <Table hover class="table-sm align-middle">
-                        <thead class="table-light">
-                            <tr>
-                                <th style="width: 100px;">ID Pohon</th>
-                                <th>Nama Pohon</th>
-                                <th class="text-center">Matang</th>
-                                <th class="text-center">Belum Matang</th>
-                                <th class="text-center">Terlalu Matang</th>
-                                <th>Status Umum</th>
-                                <th>Update Terakhir</th>
-                                <th>Pelapor</th>
-                                <th class="text-center">Aksi</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {#each filteredTrees as tree (tree.id)}
-                                {@const statusInfo = getRipenessTreeTableStatus(tree)}
+                {#if viewMode === 'table'}
+                    {#if filteredTrees.length > 0}
+                    <div class="table-responsive">
+                        <Table hover class="table-sm align-middle">
+                            <thead class="table-light">
                                 <tr>
-                                    <td class="font-monospace">{tree.id?.substring(0,8) || 'N/A'}</td>
-                                    <td>{tree.name || '-'}</td>
-                                    <td class="text-center fw-medium text-success">{tree.fruitCounts?.matang || 0}</td>
-                                    <td class="text-center">{tree.fruitCounts?.belumMatang || 0}</td>
-                                    <td class="text-center text-danger">{tree.fruitCounts?.terlaluMatang || 0}</td>
-                                    <td>
-                                        <Badge color={statusInfo.color} pill class="px-2 py-1">
-                                            <Icon icon={statusInfo.icon} class="me-1" style="vertical-align: -1px;"/>
-                                            {statusInfo.text}
-                                        </Badge>
-                                    </td>
-                                    <td>{tree.updatedDateFormatted || '-'}</td>
-                                    <td>{tree.userName || '-'}</td>
-                                    <td class="text-center">
-                                        {#if tree.img}
-                                        <Button size="sm" color="light" on:click={() => openPhotoModalHandler(tree)} title="Lihat Foto" class="btn-icon me-1">
-                                            <Icon icon="mdi:image-outline"/>
-                                        </Button>
-                                        {/if}
-                                        <Button size="sm" color="light" on:click={() => openTimelineModalHandler(tree)} title="Lihat Riwayat" class="btn-icon">
-                                            <Icon icon="mdi:timeline-text-outline"/>
-                                        </Button>
-                                    </td>
+                                    <th style="width: 100px;">ID Pohon</th>
+                                    <th>Nama Pohon</th>
+                                    <th class="text-center">Matang</th>
+                                    <th class="text-center">Belum Matang</th>
+                                    <th class="text-center">Terlalu Matang</th>
+                                    <th>Status Umum</th>
+                                    <th>Update Terakhir</th>
+                                    <th>Pelapor</th>
+                                    <th class="text-center">Aksi</th>
                                 </tr>
-                            {/each}
-                        </tbody>
-                    </Table>
-                </div>
-                {:else}
-                     <p class="text-muted text-center mt-4">{#if allTrees.length === 0 && !errorLoadingPage}Tidak ada data pohon.{:else if filteredTrees.length === 0 && searchTerm !== ""}Pohon "{searchTerm}" tidak ditemukan.{:else if !errorLoadingPage}Memuat...{/if}</p>
+                            </thead>
+                            <tbody>
+                                {#each filteredTrees as tree (tree.id)}
+                                    {@const statusInfo = getRipenessTreeTableStatus(tree)}
+                                    <tr>
+                                        <td class="font-monospace">{tree.id?.substring(0,8) || 'N/A'}</td>
+                                        <td>{tree.name || '-'}</td>
+                                        <td class="text-center fw-medium text-success">{tree.fruitCounts?.matang ?? 0}</td>
+                                        <td class="text-center">{tree.fruitCounts?.belumMatang ?? 0}</td>
+                                        <td class="text-center text-danger">{tree.fruitCounts?.terlaluMatang ?? 0}</td>
+                                        <td>
+                                            <Badge color={statusInfo.color} pill class="px-2 py-1">
+                                                <Icon icon={statusInfo.icon} class="me-1" style="vertical-align: -1px;"/>
+                                                {statusInfo.text}
+                                            </Badge>
+                                        </td>
+                                        <td>{tree.updatedDateFormatted || '-'}</td>
+                                        <td>{tree.userName || '-'}</td>
+                                        <td class="text-center">
+                                            {#if tree.img}
+                                            <Button size="sm" color="light" on:click={() => openPhotoModalHandler(tree)} title="Lihat Foto" class="btn-icon me-1">
+                                                <Icon icon="mdi:image-outline"/>
+                                            </Button>
+                                            {/if}
+                                            <Button size="sm" color="light" on:click={() => openTimelineModalHandler(tree)} title="Lihat Riwayat" class="btn-icon">
+                                                <Icon icon="mdi:timeline-text-outline"/>
+                                            </Button>
+                                        </td>
+                                    </tr>
+                                {/each}
+                            </tbody>
+                        </Table>
+                    </div>
+                    {:else}
+                         <p class="text-muted text-center mt-4">
+                            {#if serverMessage && allTrees.length === 0}
+                                {serverMessage}
+                            {:else if allTrees.length === 0}
+                                Tidak ada data pohon untuk perusahaan Ripeness ini.
+                            {:else if filteredTrees.length === 0 && searchTerm !== ""}
+                                Pohon dengan nama atau ID "{searchTerm}" tidak ditemukan.
+                            {/if}
+                        </p>
+                    {/if}
                 {/if}
             {/if}
         </CardBody>
@@ -265,10 +255,16 @@
 
     {#if selectedTreeForPhoto}
         <Modal isOpen={isPhotoModalOpen} toggle={togglePhotoModal} size="lg" centered scrollable>
-            <ModalHeader toggle={togglePhotoModal}>Foto Pohon: {selectedTreeForPhoto.name || 'Detail Pohon'}</ModalHeader>
+            <ModalHeader toggle={togglePhotoModal}>Foto Pohon (Ripeness): {selectedTreeForPhoto.name}</ModalHeader>
             <ModalBody class="text-center">
                 {#if selectedTreeForPhoto.img}
-                    <img src={selectedTreeForPhoto.img} alt="Foto {selectedTreeForPhoto.name || 'Pohon'}" class="img-fluid" style="max-height: 75vh; border-radius: 0.25rem;" on:error={handleTreeImageError}/>
+                    <img
+                        src={selectedTreeForPhoto.img}
+                        alt="Foto {selectedTreeForPhoto.name}"
+                        class="img-fluid"
+                        style="max-height: 75vh; border-radius: 0.25rem;"
+                        on:error={handleTreeImageError}
+                    />
                 {:else}
                     <p>Tidak ada foto untuk pohon ini.</p>
                 {/if}
@@ -282,14 +278,21 @@
     {#if selectedTreeForTimeline}
         <Modal isOpen={isTimelineModalOpen} toggle={toggleTimelineModal} size="xl" centered scrollable>
             <ModalHeader toggle={toggleTimelineModal}>
-                Riwayat Pohon (Ripeness): {selectedTreeForTimeline.name || 'Detail Pohon'} 
+                Riwayat Pohon Ripeness: {selectedTreeForTimeline.name}
                 <small class="text-muted ms-1">({selectedTreeForTimeline.id?.substring(0,8)})</small>
             </ModalHeader>
             <ModalBody>
                 {#if isLoadingTimeline}
-                    <div class="text-center py-5"><Spinner color="primary" /><p class="mt-2">Memuat riwayat pohon...</p></div>
+                    <div class="text-center py-5">
+                        <Spinner color="primary" />
+                        <p class="mt-2">Memuat riwayat pohon...</p>
+                    </div>
+                {:else if timelineError}
+                     <Alert color="danger">{timelineError}</Alert>
                 {:else if timelineDataForModal.length > 0}
-                    <LeftTimeline timelineItems={timelineDataForModal} treeName="" />
+                    <LeftTimeline
+                        timelineItems={timelineDataForModal}
+                        treeName="" />
                 {:else}
                     <p class="text-muted text-center py-4">Tidak ada data riwayat untuk pohon ini.</p>
                 {/if}

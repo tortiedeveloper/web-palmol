@@ -3,12 +3,12 @@
     import PageBreadcrumb from "$lib/components/PageBreadcrumb.svelte";
     import { Row, Col, Input, Button, ButtonGroup, Table, Modal, ModalHeader, ModalBody, Alert, Card, CardBody, FormGroup, Label, Badge } from "@sveltestrap/sveltestrap";
     import ContactCard from "./components/ContactCard.svelte";
-    import type { User as PKSUser, FirebaseTimestamp, AppError } from "$lib/types";
+    import type { User as PKSUser, AppError } from "$lib/types";
     import type { PageData } from './$types';
     import Icon from '@iconify/svelte';
-    import { goto, invalidateAll } from '$app/navigation';
+    import { goto } from '$app/navigation';
     import { page } from '$app/stores';
-    import { onMount } from 'svelte'; // Impor onMount
+    import { onMount } from 'svelte';
 
     interface PKSFilterItemClient {
         id: string;
@@ -17,10 +17,14 @@
 
     export let data: PageData;
 
+    $: layoutPageData = {
+        userSession: $page.data.userSession,
+        menuItemsForLayout: $page.data.menuItemsForLayout
+    };
+
     let users: PKSUser[] = [];
     let pksListForFilter: PKSFilterItemClient[] = [];
-    // selectedPksIdForFilter sekarang hanya akan diupdate oleh interaksi pengguna atau dari URL awal
-    let selectedPksIdForFilter: string | undefined = undefined; 
+    let selectedPksIdForFilter: string | undefined = undefined;
     let serverMessage: string | null | undefined;
     let currentPksNameForDisplay: string | undefined = "Semua PKS";
 
@@ -31,99 +35,109 @@
     let selectedUserForModal: PKSUser | null = null;
 
     const defaultAvatarPath = '/images/users/avatar-default.png';
-    // Hapus pksDropdownKey, kita akan coba pendekatan lain
 
-    // Inisialisasi state filter dari data prop HANYA SEKALI saat komponen dimuat atau data berubah signifikan
-    // Ini untuk mencegah bind:value menimpa pilihan pengguna sebelum navigasi
+    function initializeState(pageData: PageData) {
+        users = pageData.users || [];
+        pksListForFilter = pageData.pksListForFilter || [];
+        serverMessage = pageData.message;
+        currentPksNameForDisplay = pageData.currentPksName || "Semua PKS";
+
+        const pksIdFromUrl = $page.url.searchParams.get('filterPksId'); // Hasilnya string | null
+        let pksIdToUse: string | undefined = pksIdFromUrl === null ? undefined : pksIdFromUrl;
+
+        // pageData.selectedPksId dari server adalah string | undefined,
+        // tapi di client PageData type inference mungkin melihatnya sebagai string | null jika SvelteKit
+        // mengubah undefined menjadi null saat serialisasi untuk field tertentu, atau jika ada return path di server yang menghasilkan null.
+        // Kita asumsikan pageData.selectedPksId bisa jadi string | null | undefined di sini agar aman.
+        const serverSelectedPksId = pageData.selectedPksId;
+
+        // Jika serverSelectedPksId (dari data prop) ada dan berbeda dari yang ada di URL saat ini (pksIdToUse),
+        // kita prioritaskan nilai dari data prop (yang seharusnya sudah mencerminkan state server yang benar).
+        // Perlu konversi null ke undefined.
+        if (serverSelectedPksId !== undefined && serverSelectedPksId !== pksIdToUse) {
+            // PERBAIKAN PADA BARIS INI:
+            pksIdToUse = serverSelectedPksId === null ? undefined : serverSelectedPksId;
+        }
+        
+        selectedPksIdForFilter = pksIdToUse; // pksIdToUse sudah string | undefined
+    }
+
     onMount(() => {
         if (data) {
-            selectedPksIdForFilter = data.selectedPksId ?? undefined;
-            // console.log('[onMount] Initial selectedPksIdForFilter set from data:', selectedPksIdForFilter);
+            initializeState(data);
         }
     });
 
-    // Update state lain ketika data dari server berubah
     $: if (data) {
-        users = data.users || [];
-        pksListForFilter = data.pksListForFilter || [];
-        serverMessage = data.message;
-        currentPksNameForDisplay = data.currentPksName || "Semua PKS";
-        
-        // Jika URL berubah (misalnya setelah navigasi), update selectedPksIdForFilter agar dropdown konsisten
-        // Ini akan dijalankan setelah navigasi akibat handlePksFilterChange
-        const pksIdFromUrl = $page.url.searchParams.get('filterPksId');
-        const currentPksIdValue = pksIdFromUrl === null ? undefined : pksIdFromUrl; // Konversi null dari searchParams ke undefined
-        if (selectedPksIdForFilter !== currentPksIdValue) {
-            selectedPksIdForFilter = currentPksIdValue;
-            // console.log('[REACTIVE data] selectedPksIdForFilter updated from URL/data:', selectedPksIdForFilter);
-        }
+        initializeState(data);
     }
+
     $: serverSideErrorPage = $page.error as AppError | null;
 
-    $: filteredUsers = users.filter(user => 
+    $: filteredUsers = users.filter(user =>
         (user.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
          user.email?.toLowerCase().includes(searchTerm.toLowerCase()))
     );
 
     function handlePksFilterChange(event: Event) {
         const target = event.target as HTMLSelectElement;
-        const newPksId = target.value === "undefined" ? undefined : target.value; // "undefined" string jadi JS undefined
-        
-        // Update state client secara langsung untuk responsivitas UI sementara
-        // selectedPksIdForFilter = newPksId; // Tidak perlu, karena navigasi akan memuat ulang data & state
+        const newPksId = target.value === "undefined" ? undefined : target.value;
 
-        console.log('[CLIENT] PKS Dropdown changed by user, newPksId:', newPksId);
-
-        const params = new URLSearchParams();
-        if (newPksId) { // Hanya tambahkan jika ada nilai PKS ID
+        const params = new URLSearchParams($page.url.searchParams);
+        if (newPksId) {
             params.set('filterPksId', newPksId);
+        } else {
+            params.delete('filterPksId');
         }
         const queryString = params.toString();
-        goto(`/apps/contacts-palmol${queryString ? '?' + queryString : ''}`, { 
+        goto(`/apps/contacts-palmol${queryString ? '?' + queryString : ''}`, {
             invalidateAll: true,
-            keepFocus: true 
+            keepFocus: true
         });
     }
 
-    // ... (fungsi openUserProfileModal, toggleUserProfileModal, formatDate, handleImageError tetap sama)
     function openUserProfileModal(user: PKSUser) { selectedUserForModal = user; isUserProfileModalOpen = true; }
     function toggleUserProfileModal() { isUserProfileModalOpen = !isUserProfileModalOpen; if (!isUserProfileModalOpen) selectedUserForModal = null; }
-    function formatDate(dateString: string | null | undefined): string { if (!dateString) return 'N/A'; try { return new Date(dateString).toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' }); } catch (e) { return 'Format Salah'; } }
+    function formatDate(dateString: string | null | undefined): string { if (!dateString) return 'N/A'; try { return new Date(dateString).toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' }); } catch (e) { console.error("Error parsing date string:", dateString, e); return 'Format Salah'; } }
     function handleImageError(event: Event) { const target = event.target as HTMLImageElement; target.src = defaultAvatarPath; }
 </script>
 
-<DefaultLayout {data}> 
-    <PageBreadcrumb title={`Pengguna Palmol ${currentPksNameForDisplay && currentPksNameForDisplay !== "Semua PKS" ? ('- PKS ' + currentPksNameForDisplay) : '- Semua PKS'}`} subTitle="Aplikasi Palmol" />
+<DefaultLayout data={layoutPageData}>
+    <PageBreadcrumb title={`Pengguna Palmol ${currentPksNameForDisplay && currentPksNameForDisplay !== "Semua PKS" ? ('- PKS ' + currentPksNameForDisplay) : (pksListForFilter.length > 0 ? '- Semua PKS' : '')}`} subTitle="Aplikasi Palmol" />
 
     {#if serverSideErrorPage}
-        <Alert color="danger" class="mt-2">{serverSideErrorPage?.message || 'Gagal memuat data.'}</Alert>
+        <Alert color="danger" class="mt-2">{serverSideErrorPage.message || 'Terjadi kesalahan server saat memuat data.'}</Alert>
     {/if}
 
     <Card class="mt-3">
         <CardBody>
             <Row class="mb-3 gy-3 align-items-center">
                 <Col md="4">
-                     <FormGroup class="mb-0">
-                        <Label for="pks-filter-select-contacts" class="form-label-sm">Filter berdasarkan PKS:</Label>
-                        <Input 
-                            type="select" 
-                            id="pks-filter-select-contacts" 
-                            bsSize="sm" 
-                            value={selectedPksIdForFilter ?? "undefined"} on:change={handlePksFilterChange}
+                    <FormGroup class="mb-0">
+                        <Label for="pks-filter-select-contacts" class="form-label-sm">Filter PKS:</Label>
+                        <Input
+                            type="select"
+                            id="pks-filter-select-contacts"
+                            bsSize="sm"
+                            value={selectedPksIdForFilter ?? "undefined"}
+                            on:change={handlePksFilterChange}
+                            disabled={pksListForFilter.length === 0 && !serverSideErrorPage}
                         >
-                            <option value="undefined">Semua PKS</option> {#each pksListForFilter as pksItem (pksItem.id)}
+                            <option value="undefined">Semua PKS</option>
+                            {#each pksListForFilter as pksItem (pksItem.id)}
                                 <option value={pksItem.id}>{pksItem.name}</option>
                             {/each}
                         </Input>
                     </FormGroup>
                 </Col>
                 <Col md="5">
-                    <Input type="text" placeholder="Cari pengguna..." bind:value={searchTerm} class="form-control-sm"/>
+                     <Label for="search-user-palmol" class="form-label-sm visually-hidden">Cari Pengguna:</Label>
+                    <Input type="text" id="search-user-palmol" placeholder="Cari pengguna berdasarkan nama atau email..." bind:value={searchTerm} class="form-control-sm"/>
                 </Col>
                 <Col md="3" class="text-md-end">
                     <ButtonGroup size="sm">
-                        <Button color="primary" outline={viewMode !== 'card'} on:click={() => viewMode = 'card'} title="Kartu"><Icon icon="mdi:view-grid-outline" /></Button>
-                        <Button color="primary" outline={viewMode !== 'table'} on:click={() => viewMode = 'table'} title="Tabel"><Icon icon="mdi:view-list-outline" /></Button>
+                        <Button color="primary" outline={viewMode !== 'card'} on:click={() => viewMode = 'card'} title="Tampilan Kartu"><Icon icon="mdi:view-grid-outline" /></Button>
+                        <Button color="primary" outline={viewMode !== 'table'} on:click={() => viewMode = 'table'} title="Tampilan Tabel"><Icon icon="mdi:view-list-outline" /></Button>
                     </ButtonGroup>
                 </Col>
             </Row>
@@ -131,9 +145,9 @@
             {#if viewMode === 'card'}
                 <Row class="row-cols-1 row-cols-sm-2 row-cols-lg-3 row-cols-xl-4 g-3">
                     {#each filteredUsers as user (user.id)}
-                        <Col class="d-flex align-items-stretch"> 
-                            <ContactCard user={user} onViewProfile={openUserProfileModal} class="w-100">
-                                {#if selectedPksIdForFilter === undefined && user.pksName} 
+                        <Col class="d-flex align-items-stretch">
+                            <ContactCard {user} onViewProfile={openUserProfileModal} class="w-100">
+                                {#if selectedPksIdForFilter === undefined && user.pksName}
                                     <p class="text-muted fs-xs mt-1 mb-0 text-center">
                                         <Icon icon="mdi:factory" class="me-1" style="vertical-align: -1px;"/>PKS: {user.pksName}
                                     </p>
@@ -141,7 +155,19 @@
                             </ContactCard>
                         </Col>
                     {:else}
-                        <Col><p class="text-muted text-center mt-4">{serverMessage || (users.length === 0 ? "Tidak ada pengguna." : (searchTerm ? `Pengguna "${searchTerm}" tidak ditemukan.` : "Memuat..."))}</p></Col>
+                        <Col>
+                            <p class="text-muted text-center mt-4">
+                                {#if serverMessage && users.length === 0}
+                                    {serverMessage}
+                                {:else if users.length === 0 && !serverSideErrorPage}
+                                    Tidak ada pengguna yang dapat ditampilkan untuk filter ini.
+                                {:else if filteredUsers.length === 0 && searchTerm !== ""}
+                                    Pengguna dengan nama atau email "{searchTerm}" tidak ditemukan.
+                                {:else if !serverSideErrorPage}
+                                    Memuat atau tidak ada data pengguna...
+                                {/if}
+                            </p>
+                        </Col>
                     {/each}
                 </Row>
             {/if}
@@ -167,7 +193,9 @@
                                     <td>{user.name || '-'}</td>
                                     <td>{user.email || '-'}</td>
                                     {#if selectedPksIdForFilter === undefined}
-                                        <td class="text-muted fs-sm" title={user.pksName || user.pksId}>{user.pksName || (user.pksId ? user.pksId.substring(0,8) : '')}{user.pksName && user.pksName.length > 20 ? '...' : (user.pksId && user.pksId && user.pksId.length > 8 && !user.pksName ? '...' : '')}</td>
+                                        <td class="text-muted fs-sm" title={user.pksName || user.pksId}>
+                                            {user.pksName || (user.pksId ? user.pksId.substring(0,8) : '')}{user.pksName && user.pksName.length > 20 ? '...' : (user.pksId && user.pksId.length > 8 && !user.pksName ? '...' : '')}
+                                        </td>
                                     {/if}
                                     <td>{user.phoneNumber || '-'}</td>
                                     <td class="text-center">
@@ -179,7 +207,17 @@
                     </Table>
                 </div>
                 {:else}
-                     <p class="text-muted text-center mt-4">{serverMessage || (users.length === 0 ? "Tidak ada pengguna." : (searchTerm ? `Pengguna "${searchTerm}" tidak ditemukan.` : "Memuat..."))}</p>
+                     <p class="text-muted text-center mt-4">
+                        {#if serverMessage && users.length === 0}
+                            {serverMessage}
+                        {:else if users.length === 0 && !serverSideErrorPage}
+                            Tidak ada pengguna yang dapat ditampilkan untuk filter ini.
+                        {:else if filteredUsers.length === 0 && searchTerm !== ""}
+                            Pengguna dengan nama atau email "{searchTerm}" tidak ditemukan.
+                        {:else if !serverSideErrorPage}
+                           Memuat atau tidak ada data pengguna...
+                        {/if}
+                    </p>
                 {/if}
             {/if}
         </CardBody>
@@ -188,8 +226,8 @@
     {#if selectedUserForModal}
         <Modal isOpen={isUserProfileModalOpen} toggle={toggleUserProfileModal} size="lg" centered scrollable>
             <ModalHeader toggle={toggleUserProfileModal} class="bg-light">
-                 <div class="d-flex align-items-center">
-                    <Icon icon="mdi:account-card-outline" class="fs-4 me-2 text-primary"/>  
+                   <div class="d-flex align-items-center">
+                    <Icon icon="mdi:account-card-outline" class="fs-4 me-2 text-primary"/>
                     Profil Pengguna Palmol: <span class="fw-medium ms-1">{selectedUserForModal.name}</span>
                 </div>
             </ModalHeader>
@@ -211,7 +249,7 @@
                             <h6 class="text-primary mb-2 mt-md-0 mt-3"><Icon icon="mdi:card-account-phone-outline" class="me-1"/>Kontak</h6>
                             <p class="fs-sm mb-1"><strong class="text-muted">Telepon:</strong> {selectedUserForModal.phoneNumber || '-'}</p>
                             <p class="fs-sm mb-3"><strong class="text-muted">Alamat:</strong> {selectedUserForModal.address || '-'}</p>
-                            
+
                             <h6 class="text-primary mb-2"><Icon icon="mdi:account-details-outline" class="me-1"/>Info Akun</h6>
                             <p class="fs-sm mb-1"><strong class="text-muted">ID Pengguna (Auth):</strong> <span class="font-monospace">{selectedUserForModal.userId}</span></p>
                             <p class="fs-sm mb-1"><strong class="text-muted">ID Dokumen:</strong> <span class="font-monospace">{selectedUserForModal.id}</span></p>
@@ -219,6 +257,7 @@
                             <p class="fs-sm mb-1"><strong class="text-muted">Membership:</strong> {selectedUserForModal.membership}</p>
                             {/if}
                             <p class="fs-sm mb-1"><strong class="text-muted">Valid Hingga:</strong> {selectedUserForModal.date?.validDate ? formatDate(selectedUserForModal.date.validDate) : '-'}</p>
+                             <p class="fs-sm mb-1"><strong class="text-muted">Dibuat:</strong> {selectedUserForModal.date?.createdDate ? formatDate(selectedUserForModal.date.createdDate) : '-'}</p>
                             <p class="fs-sm mb-3"><strong class="text-muted">Update Terakhir:</strong> {selectedUserForModal.lastUpdated ? formatDate(selectedUserForModal.lastUpdated) : '-'}</p>
 
                             <h6 class="text-primary mb-2"><Icon icon="mdi:information-outline" class="me-1"/>Info Tambahan</h6>
@@ -228,7 +267,7 @@
                             {#if selectedUserForModal.gender}
                             <p class="fs-sm mb-1"><strong class="text-muted">Gender:</strong> {selectedUserForModal.gender}</p>
                             {/if}
-                             {#if selectedUserForModal.androidId}
+                            {#if selectedUserForModal.androidId}
                             <p class="fs-sm mb-1"><strong class="text-muted">Android ID:</strong> <span class="font-monospace">{selectedUserForModal.androidId}</span></p>
                             {/if}
                         </div>

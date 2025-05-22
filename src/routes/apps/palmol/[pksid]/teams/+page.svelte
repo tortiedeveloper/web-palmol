@@ -3,36 +3,55 @@
     import PageBreadcrumb from "$lib/components/PageBreadcrumb.svelte";
     import { goto } from '$app/navigation';
     import { page } from '$app/stores';
-    import type { PageData } from './$types';
-    import type { PKSTeam, AppError } from '$lib/types'; // Pastikan AppError sudah diekspor dari $lib/types
-    import { Row, Col, Card, CardBody, CardTitle, Button, Alert, Spinner, Badge } from "@sveltestrap/sveltestrap"; // CardText dihapus sementara, akan diganti div
+    import type { PageData } from './$types'; // Mengambil tipe PageData dari SvelteKit
+    import type { PKSTeam, AppError, UserSessionData, MenuItemType } from '$lib/types';
+    import { Row, Col, Card, CardBody, Button, Alert, Spinner, Badge } from "@sveltestrap/sveltestrap";
     import Icon from '@iconify/svelte';
 
     export let data: PageData;
 
-    let pksId: string | undefined = undefined;
-    let namaPKS: string | undefined = undefined;
+    // Data untuk DefaultLayout
+    let layoutPageData: { userSession: UserSessionData | undefined; menuItemsForLayout: MenuItemType[] };
+    $: layoutPageData = {
+        userSession: $page.data.userSession as UserSessionData | undefined,
+        menuItemsForLayout: ($page.data.menuItemsForLayout as MenuItemType[]) || []
+    };
+
+    // State halaman dari data server
+    let pksId: string | undefined;
+    let namaPKS: string | undefined;
     let teamList: PKSTeam[] = [];
-    let messageFromServer: string | undefined | null = undefined;
-    let serverError: AppError | null = null; // Diberi tipe AppError atau null
+    let messageFromServer: string | null | undefined;
 
-    $: if (data) {
-        pksId = data.pksId;
-        namaPKS = data.namaPKS;
-        teamList = data.teamList || [];
-        messageFromServer = data.message;
-    }
-    $: serverError = $page.error as AppError | null;
+    // Error kritis dari SvelteKit
+    $: criticalError = $page.error as AppError | null;
 
-
-    function handleTeamCardClick(teamId: string) {
-        if (pksId && teamId) {
-            const targetUrl = `/apps/palmol/${pksId}/teams/${teamId}/detail`;
-            goto(targetUrl);
+    // Update state saat data berubah
+    $: {
+        if (data && !criticalError) {
+            pksId = data.pksId;
+            namaPKS = data.namaPKS;
+            teamList = data.teamList || [];
+            messageFromServer = data.message; // Pesan dari server (mis. "tidak ada tim")
+        } else if (criticalError) {
+            // Reset jika ada error kritis
+            pksId = undefined;
+            namaPKS = "Error";
+            teamList = [];
+            messageFromServer = null;
         }
     }
 
-    function handleKeyboardActivation(event: KeyboardEvent, teamId: string) {
+    function handleTeamCardClick(teamId: string | undefined) { // teamId bisa undefined jika ada masalah data
+        if (pksId && teamId) {
+            const targetUrl = `/apps/palmol/${pksId}/teams/${teamId}/detail`;
+            goto(targetUrl);
+        } else {
+            console.warn("PKS ID atau Team ID tidak valid untuk navigasi.");
+        }
+    }
+
+    function handleKeyboardActivation(event: KeyboardEvent, teamId: string | undefined) {
         if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault();
             handleTeamCardClick(teamId);
@@ -40,28 +59,27 @@
     }
 </script>
 
-<DefaultLayout {data}>
-    <PageBreadcrumb title="Daftar Tim" subTitle={`PKS: ${namaPKS || pksId || 'Tidak Diketahui'}`} />
+<DefaultLayout data={layoutPageData}> <PageBreadcrumb title="Daftar Tim" subTitle={`PKS: ${namaPKS || pksId || 'Tidak Diketahui'}`} />
 
     <main class="teams-page-main-content pt-3">
         <div class="d-flex justify-content-between align-items-center mb-4">
             <h1 class="h3 mb-0 text-dark">Tim di {namaPKS || 'PKS Dipilih'}</h1>
-            {#if pksId}
+            {#if pksId && !criticalError}
                 <Button outline color="secondary" size="sm" href={`/apps/palmol`}>
                     <Icon icon="mdi:arrow-left" class="me-1"/> Kembali ke Daftar PKS
                 </Button>
             {/if}
         </div>
 
-        {#if serverError}
+        {#if criticalError}
             <Alert color="danger" class="shadow-sm">
                 <h4 class="alert-heading">
-                    <Icon icon="mdi:alert-octagon-outline" class="me-2"/>Terjadi Kesalahan
+                    <Icon icon="mdi:alert-octagon-outline" class="me-2"/>Terjadi Kesalahan Server
                 </h4>
                 <p>
                     Tidak dapat memuat daftar tim.
-                    {#if typeof serverError === 'object' && serverError !== null && serverError.message}
-                        <br/><small>Detail: {serverError.message}{serverError.status ? ` (${serverError.status})` : ''}</small>
+                    {#if criticalError.message}
+                        <br/><small>Detail: {criticalError.message}</small>
                     {/if}
                 </p>
             </Alert>
@@ -75,18 +93,21 @@
                             tabindex={0}
                             aria-label={`Lihat detail untuk tim ${team.teamName || 'Tanpa Nama'}`}
                             on:click={() => handleTeamCardClick(team.id)}
-                            on:keydown={(event) => handleKeyboardActivation(event, team.id)} style="cursor: pointer;"
+                            on:keydown={(event) => handleKeyboardActivation(event, team.id)}
+                            style="cursor: pointer;"
                         >
                             <Card class="team-item-card h-100 shadow-sm border-light card-hover-lift flex-grow-1">
                                 <div class="team-card-visual-header bg-primary bg-gradient text-white d-flex flex-column align-items-center justify-content-center" style="min-height: 100px; border-top-left-radius: var(--bs-card-inner-border-radius); border-top-right-radius: var(--bs-card-inner-border-radius);">
                                     <Icon icon="mdi:account-group-outline" style="font-size: 2.5rem; opacity: 0.8;"/>
+                                    {#if team.id}
                                     <span class="fs-xs text-white-50 mt-1">ID: {team.id.substring(0,6)}...</span>
+                                    {/if}
                                 </div>
                                 <CardBody class="d-flex flex-column p-3 flex-grow-1">
                                     <h5 class="card-title mb-1 text-dark text-truncate" title={team.teamName || 'Tim Tanpa Nama'}>
                                         {team.teamName || 'Tim Tanpa Nama'}
                                     </h5>
-                                    
+
                                     <div class="mb-2">
                                         {#if team.membersCount > 0}
                                             <Badge color="light" class="text-dark border me-1" pill>
@@ -107,7 +128,7 @@
                                             Laporan Terakhir: <span class="fw-medium">{team.lastReport || 'Belum ada'}</span>
                                         </p>
                                     </div>
-                                    
+
                                     <div class="mt-auto pt-2 border-top">
                                         <Button color="primary" size="sm" outline class="w-100">
                                             Lihat Detail & Laporan <Icon icon="mdi:arrow-right" class="ms-1"/>
@@ -124,10 +145,9 @@
                 <Icon icon="mdi:information-outline" class="me-2" style="font-size: 1.2rem; vertical-align: -3px;"/>
                 {messageFromServer}
             </Alert>
-        {:else}
-            <div class="text-center py-5 status-message">
+        {:else} <div class="text-center py-5 status-message">
                 <Spinner color="primary" style="width: 3rem; height: 3rem;"/>
-                <p class="mt-3 text-muted">Memuat daftar tim Anda...</p>
+                <p class="mt-3 text-muted">Memuat daftar tim...</p>
             </div>
         {/if}
     </main>
@@ -141,8 +161,7 @@
         border-radius: 0.25rem;
         text-align: center;
     }
-    
-    .fs-xs { 
+    .fs-xs {
         font-size: 0.75rem;
     }
 </style>

@@ -1,80 +1,85 @@
 // src/routes/apps/contacts-ripeness/+page.server.ts
-import { ripenessDb } from '$lib/firebase/ripenessClient'; // Gunakan DB Ripeness
-import { collection, query, where, getDocs, orderBy, type Timestamp as FirebaseTimestampType } from 'firebase/firestore';
-import { redirect } from '@sveltejs/kit';
-import type { PageServerLoadEvent, PageServerLoad } from './$types';
-import type { User, FirebaseTimestamp, UserDateInfo, UserSessionData } from '$lib/types';
+import { redirect, error as svelteKitError } from '@sveltejs/kit';
+import type { PageServerLoad } from './$types';
+import type { User, UserSessionData } from '$lib/types';
+import { ripenessDbAdmin } from '$lib/server/adminRipeness'; // Menggunakan Admin SDK Ripeness
+import admin from 'firebase-admin'; // Untuk tipe Timestamp Admin SDK
 
-// Helper function untuk konversi Firebase Timestamp ke string ISO atau null
-function serializeTimestamp(timestamp: FirebaseTimestampType | undefined | null): string | null {
+// Helper untuk serialisasi Firebase Admin Timestamp
+function serializeAdminTimestamp(timestamp: admin.firestore.Timestamp | undefined | null): string | null {
     if (timestamp && typeof timestamp.toDate === 'function') {
         return timestamp.toDate().toISOString();
     }
     return null;
 }
 
-export const load: PageServerLoad = async (event: PageServerLoadEvent) => {
-    const userSession = event.locals.user as UserSessionData | undefined;
+export const load: PageServerLoad = async ({ locals }) => {
+    const userSession = locals.user as UserSessionData | undefined;
 
-    // Pastikan pengguna memiliki akses ke Ripeness dan ada ripenessCompanyId
-    if (!userSession || !userSession.hasRipenessAccess || !userSession.ripenessCompanyId) {
-        console.warn("[ContactsRipeness Load] Sesi Ripeness tidak valid atau companyId tidak ada, redirecting ke login.");
+    if (!userSession?.hasRipenessAccess || !userSession.ripenessCompanyId) {
+        console.warn("[ContactsRipeness Server Load] Sesi Ripeness tidak valid atau ripenessCompanyId tidak ada, redirecting.");
         throw redirect(303, '/auth/sign-in');
     }
     const companyIdToLoad = userSession.ripenessCompanyId;
 
-    console.log(`[ContactsRipeness Load] Memuat data pengguna untuk perusahaan ID Ripeness: ${companyIdToLoad}`);
+    if (!ripenessDbAdmin) {
+        console.error("[ContactsRipeness Server Load] Ripeness Admin DB tidak terinisialisasi!");
+        throw svelteKitError(503, "Layanan data pengguna Ripeness tidak tersedia saat ini.");
+    }
+
+    console.log(`[ContactsRipeness Server Load] Memuat data pengguna untuk perusahaan Ripeness ID: ${companyIdToLoad}`);
 
     try {
-        const usersColRef = collection(ripenessDb, 'users'); // Gunakan ripenessDb
-        const q = query(
-            usersColRef, 
-            where('companyId', '==', companyIdToLoad),
-            orderBy('name', 'asc')
-        );
-        
-        const querySnapshot = await getDocs(q);
+        // Asumsi koleksi 'users' ada di root Ripeness DB dan memiliki field 'companyId'
+        const usersColRef = ripenessDbAdmin.collection('users');
+        const q = usersColRef
+            .where('companyId', '==', companyIdToLoad)
+            .orderBy('name', 'asc');
+
+        const querySnapshot = await q.get();
         const usersList: User[] = [];
-        
+
         querySnapshot.forEach((doc) => {
             const data = doc.data();
-            // Struktur serialisasi sama dengan contacts-gano
             const serializableUser: User = {
                 id: doc.id,
                 userId: data.userId || doc.id,
                 name: data.name || '',
                 email: data.email || '',
-                companyId: data.companyId || '',
+                companyId: data.companyId || '', // Ini adalah companyId di Ripeness
                 avatar: data.avatar,
                 phoneNumber: data.phoneNumber,
                 address: data.address,
                 androidId: data.androidId,
                 birthDate: data.birthDate,
-                date: { 
-                    validDate: serializeTimestamp(data.date?.validDate as FirebaseTimestampType | undefined)
+                date: {
+                    validDate: serializeAdminTimestamp(data.date?.validDate as admin.firestore.Timestamp | undefined),
+                    createdDate: serializeAdminTimestamp(data.date?.createdDate as admin.firestore.Timestamp | undefined),
+                    updatedDate: serializeAdminTimestamp(data.date?.updatedDate as admin.firestore.Timestamp | undefined),
                 },
                 fcmToken: data.fcmToken,
                 gender: data.gender,
                 idToken: data.idToken,
-                lastUpdated: serializeTimestamp(data.lastUpdated as FirebaseTimestampType | undefined),
+                lastUpdated: serializeAdminTimestamp(data.lastUpdated as admin.firestore.Timestamp | undefined),
                 location: data.location,
-                membership: data.membership, // Field membership juga ada di users Ripeness
+                membership: data.membership,
                 type: data.type,
+                // Tambahkan field role jika ada di data pengguna Ripeness
+                // role: data.role,
             };
             usersList.push(serializableUser);
         });
 
         return {
             users: usersList,
-            companyId: companyIdToLoad // Anda mungkin ingin mengganti nama ini menjadi ripenessCompanyId agar lebih jelas di +page.svelte
+            // Mengirimkan ripenessCompanyId sebagai 'companyId' untuk konsistensi dengan halaman lain
+            // atau bisa diganti namanya menjadi 'ripenessCompanyId' jika lebih disukai
+            companyId: companyIdToLoad,
+            message: usersList.length === 0 ? 'Tidak ada pengguna yang terdaftar untuk perusahaan Ripeness ini.' : null
         };
 
     } catch (error: any) {
-        console.error(`Error loading users for company ${companyIdToLoad} di contacts-ripeness:`, error);
-        return {
-            users: [],
-            companyId: companyIdToLoad,
-            error: `Gagal memuat data pengguna (Ripeness): ${error.message}`
-        };
+        console.error(`[ContactsRipeness Server Load] Gagal memuat pengguna untuk Ripeness company ${companyIdToLoad}:`, error);
+        throw svelteKitError(500, `Gagal memuat data pengguna Ripeness: ${error.message}`);
     }
 };

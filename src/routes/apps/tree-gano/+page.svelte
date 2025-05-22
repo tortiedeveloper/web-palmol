@@ -1,30 +1,29 @@
 <script lang="ts">
     import DefaultLayout from "$lib/layouts/DefaultLayout.svelte";
     import PageBreadcrumb from "$lib/components/PageBreadcrumb.svelte";
-    import { 
-        Col, Row, Input, Button, ButtonGroup, Table, 
-        Modal, ModalHeader, ModalBody, Alert, Card, CardBody, CardTitle, Spinner, Badge 
+    import {
+        Col, Row, Input, Button, ButtonGroup, Table,
+        Modal, ModalHeader, ModalBody, Alert, Card, CardBody, Spinner, Badge
     } from "@sveltestrap/sveltestrap";
-    import TreeCard from "./components/TreeCard.svelte"; // Pastikan path ini benar, jika TreeCard ada di dalam folder components di tree-gano
+    import TreeCard from "./components/TreeCard.svelte";
     import LeftTimeline from "$lib/components/customTimeline/LeftTimeline.svelte";
-    
-    import type { Tree, TreeRecord, User, FirebaseTimestamp, TimelineDataType, TimelineEventType } from "$lib/types";
+
+    import type { Tree, TimelineDataType, TimelineEventType, AppError } from "$lib/types";
     import type { PageData } from './$types';
     import Icon from '@iconify/svelte';
-    import { ganoAIDb } from '$lib/firebase/ganoAIClient';
-    import { collection, query, where, getDocs, orderBy, doc, getDoc } from 'firebase/firestore';
+    import { page } from '$app/stores';
     import { tick } from "svelte";
 
-    export let data: PageData; // 'data' ini datang dari SvelteKit (gabungan +layout.server.ts & +page.server.ts rute ini)
+    export let data: PageData;
 
-    // ... (sisa kode <script> Anda yang sudah ada untuk state, filteredTrees, fungsi modal, dll. tetap sama)
-    // Pastikan semua fungsi seperti openPhotoModal, togglePhotoModal, fetchUserName, openTimelineModal, 
-    // getStatusDisplay, toggleTimelineModal, handleTreeImageError sudah ada di sini.
-    // Saya akan menyalinnya lagi untuk kelengkapan:
+    $: layoutPageData = {
+        userSession: $page.data.userSession,
+        menuItemsForLayout: $page.data.menuItemsForLayout
+    };
 
     let allTrees: Tree[] = [];
-    let companyId: string | null = null;
-    let errorLoadingPage: string | undefined = undefined;
+    let activeCompanyId: string | null = null;
+    let serverMessage: string | null | undefined;
 
     let searchTerm = "";
     let viewMode: 'card' | 'table' = 'card';
@@ -36,16 +35,23 @@
     let selectedTreeForTimeline: Tree | null = null;
     let timelineDataForModal: TimelineDataType[] = [];
     let isLoadingTimeline = false;
+    let timelineError: string | null = null;
 
     const defaultTreeImage = '/images/trees/default-tree.jpg';
 
-    $: {
-        allTrees = data.trees || [];
-        companyId = data.companyId || null;
-        errorLoadingPage = data.error;
+    function initializeState(currentPageData: PageData) {
+        allTrees = currentPageData.trees || [];
+        activeCompanyId = currentPageData.companyId || null;
+        // PERBAIKAN untuk Error 1: Akses message secara opsional
+        serverMessage = (currentPageData as any).message || null;
     }
 
-    $: filteredTrees = allTrees.filter(tree => 
+    initializeState(data);
+    $: initializeState(data);
+
+    $: criticalError = $page.error as AppError | null;
+
+    $: filteredTrees = allTrees.filter(tree =>
         tree.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         tree.id?.toLowerCase().includes(searchTerm.toLowerCase())
     );
@@ -57,81 +63,55 @@
 
     function togglePhotoModal() {
         isPhotoModalOpen = !isPhotoModalOpen;
-        if (!isPhotoModalOpen) {
-            selectedTreeForPhoto = null;
-        }
-    }
-    
-    const userNameCache = new Map<string, string>();
-    async function fetchUserName(userId: string): Promise<string> {
-        if (userNameCache.has(userId)) {
-            return userNameCache.get(userId)!;
-        }
-        try {
-            const userDocRef = doc(ganoAIDb, 'users', userId);
-            const userDocSnap = await getDoc(userDocRef);
-            if (userDocSnap.exists()) {
-                const userName = (userDocSnap.data() as User).name || userId;
-                userNameCache.set(userId, userName);
-                return userName;
-            }
-            userNameCache.set(userId, userId);
-            return userId;
-        } catch (e) {
-            console.error("Error fetching user name:", e);
-            userNameCache.set(userId, userId);
-            return userId;
-        }
+        if (!isPhotoModalOpen) selectedTreeForPhoto = null;
     }
 
     async function openTimelineModal(tree: Tree) {
-        if (!companyId) return;
+        if (!activeCompanyId || !tree.id) {
+            timelineError = "Informasi perusahaan atau pohon tidak lengkap.";
+            return;
+        }
         selectedTreeForTimeline = tree;
         isTimelineModalOpen = true;
         isLoadingTimeline = true;
         timelineDataForModal = [];
+        timelineError = null;
 
         try {
-            const recordsRef = collection(ganoAIDb, `company/${companyId}/tree/${tree.id}/record`);
-            const recordsQuery = query(recordsRef, orderBy("date.createdDate", "desc"));
-            const recordsSnapshot = await getDocs(recordsQuery);
-            const formattedRecords: Record<string, TimelineEventType[]> = {};
-
-            for (const recordDoc of recordsSnapshot.docs) {
-                const record = { id: recordDoc.id, ...recordDoc.data() } as TreeRecord;
-                // Mengakses createdDate yang SUDAH DI-STRINGIFY dari +page.server.ts saat tree dimuat
-                // Jika Anda memuat record langsung di sini, pastikan konversi Timestamp dilakukan
-                const recordCreatedDate = (record.date?.createdDate as unknown as FirebaseTimestamp)?.toDate(); 
-                
-                if (!recordCreatedDate) continue;
-
-                const dateKey = recordCreatedDate.toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' });
-                if (!formattedRecords[dateKey]) {
-                    formattedRecords[dateKey] = [];
-                }
-
-                let reportedBy = record.userId ? 'Memuat...' : 'Sistem';
-                if (record.userId) {
-                    reportedBy = await fetchUserName(record.userId);
-                }
-                
-                formattedRecords[dateKey].push({
-                    title: record.status ? getStatusDisplay(record.status).text : "Update Riwayat",
-                    description: record.description || "Tidak ada deskripsi.",
-                    badge: record.status ? getStatusDisplay(record.status).badgeText : undefined,
-                    imageUrl: record.img,
-                    reportedBy: reportedBy
-                });
+            const response = await fetch(`/api/gano-tree-records/${activeCompanyId}/${tree.id}.json`);
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({ message: `Gagal memuat riwayat: ${response.statusText}` }));
+                throw new Error(errData.message || `HTTP error ${response.status}`);
             }
-            timelineDataForModal = Object.entries(formattedRecords).map(([dateStr, events]) => ({ date: dateStr, events }));
-        } catch (err) {
-            console.error("Error fetching tree records:", err);
+            const result: { timelineEvents: TimelineEventType[] } = await response.json();
+
+            const formattedRecords: Record<string, TimelineEventType[]> = {};
+            result.timelineEvents.forEach(event => {
+                // PERBAIKAN untuk Error 2,3,4,5: Pastikan event.originalDateISO ada sebelum digunakan
+                if (event.originalDateISO) {
+                    const dateKey = new Date(event.originalDateISO).toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' });
+                    if (!formattedRecords[dateKey]) {
+                        formattedRecords[dateKey] = [];
+                    }
+                    formattedRecords[dateKey].push(event);
+                } else {
+                    console.warn("Timeline event missing originalDateISO:", event);
+                }
+            });
+            timelineDataForModal = Object.entries(formattedRecords)
+                .map(([dateStr, events]) => ({ date: dateStr, events }))
+                // PERBAIKAN untuk Error 2,3,4,5: Tambahkan nullish coalescing atau pastikan event.originalDateISO ada
+                .sort((a,b) => new Date(b.events[0]?.originalDateISO ?? 0).getTime() - new Date(a.events[0]?.originalDateISO ?? 0).getTime());
+
+        } catch (err: any) {
+            console.error("Error fetching tree timeline:", err);
+            timelineError = err.message || "Gagal memuat riwayat pohon.";
         } finally {
             isLoadingTimeline = false;
             await tick();
         }
     }
-    
+
     function getStatusDisplay(status: string | undefined): { text: string, badgeText: string, color: string, icon: string } {
         const s = status?.toLowerCase();
         if (s === 'sick') return { text: 'Terindikasi Sakit (Ganoderma)', badgeText: 'Sakit', color: 'danger', icon: 'mdi:virus-off-outline' };
@@ -145,6 +125,7 @@
         if (!isTimelineModalOpen) {
             selectedTreeForTimeline = null;
             timelineDataForModal = [];
+            timelineError = null;
         }
     }
 
@@ -154,124 +135,119 @@
     }
 </script>
 
-<DefaultLayout {data}>
-    <PageBreadcrumb title="Data Pohon Perusahaan" subTitle="Aplikasi" />
+<DefaultLayout data={layoutPageData}>
+    <PageBreadcrumb title="Data Pohon GanoAI" subTitle="Aplikasi GanoAI" />
 
-    {#if errorLoadingPage}
-        <Alert color="danger" class="mt-2">{errorLoadingPage}</Alert>
+    {#if criticalError}
+        <Alert color="danger" class="mt-2">{criticalError.message || 'Terjadi kesalahan server.'}</Alert>
     {/if}
 
     <Card class="mt-3">
         <CardBody>
             <Row class="mb-3 gy-2 align-items-center">
                 <Col sm="8" md="9">
-                    <Input 
-                        type="text" 
-                        placeholder="Cari pohon berdasarkan nama atau ID..." 
+                    <Input
+                        type="text"
+                        placeholder="Cari pohon berdasarkan nama atau ID..."
                         bind:value={searchTerm}
                         class="form-control-sm"
+                        disabled={criticalError != null}
                     />
                 </Col>
                 <Col sm="4" md="3" class="text-sm-end">
                     <ButtonGroup size="sm">
-                        <Button 
-                            color="primary" 
-                            outline={viewMode !== 'card'} 
-                            on:click={() => viewMode = 'card'}
-                            title="Tampilan Kartu">
+                        <Button color="primary" outline={viewMode !== 'card'} on:click={() => viewMode = 'card'} title="Tampilan Kartu" disabled={criticalError != null}>
                             <Icon icon="mdi:view-grid-outline" />
                         </Button>
-                        <Button 
-                            color="primary" 
-                            outline={viewMode !== 'table'} 
-                            on:click={() => viewMode = 'table'}
-                            title="Tampilan Tabel">
+                        <Button color="primary" outline={viewMode !== 'table'} on:click={() => viewMode = 'table'} title="Tampilan Tabel" disabled={criticalError != null}>
                             <Icon icon="mdi:view-list-outline" />
                         </Button>
                     </ButtonGroup>
                 </Col>
             </Row>
 
-            {#if viewMode === 'card'}
-                <Row class="row-cols-1 row-cols-sm-2 row-cols-lg-3 row-cols-xl-4 g-3">
-                    {#each filteredTrees as tree (tree.id)}
-                        <Col class="d-flex align-items-stretch">
-                            <TreeCard 
-                                {tree} 
-                                onViewPhoto={openPhotoModal}
-                                onViewTimeline={openTimelineModal}
-                                class="w-100"
-                            />
-                        </Col>
-                    {:else}
-                        <Col>
-                            <p class="text-muted text-center mt-4">
-                                {#if allTrees.length === 0 && !errorLoadingPage}
-                                    Tidak ada data pohon untuk perusahaan ini.
-                                {:else if filteredTrees.length === 0 && searchTerm !== ""}
-                                    Pohon dengan nama atau ID "{searchTerm}" tidak ditemukan.
-                                {:else if !errorLoadingPage}
-                                    Memuat data pohon...
-                                {/if}
-                            </p>
-                        </Col>
-                    {/each}
-                </Row>
-            {/if}
+            {#if !criticalError}
+                {#if viewMode === 'card'}
+                    <Row class="row-cols-1 row-cols-sm-2 row-cols-lg-3 row-cols-xl-4 g-3">
+                        {#each filteredTrees as tree (tree.id)}
+                            <Col class="d-flex align-items-stretch">
+                                <TreeCard
+                                    {tree}
+                                    onViewPhoto={openPhotoModal}
+                                    onViewTimeline={openTimelineModal}
+                                    class="w-100"
+                                />
+                            </Col>
+                        {:else}
+                            <Col>
+                                <p class="text-muted text-center mt-4">
+                                    {#if serverMessage && allTrees.length === 0}
+                                        {serverMessage}
+                                    {:else if allTrees.length === 0}
+                                        Tidak ada data pohon untuk perusahaan ini.
+                                    {:else if filteredTrees.length === 0 && searchTerm !== ""}
+                                        Pohon dengan nama atau ID "{searchTerm}" tidak ditemukan.
+                                    {/if}
+                                </p>
+                            </Col>
+                        {/each}
+                    </Row>
+                {/if}
 
-            {#if viewMode === 'table'}
-                {#if filteredTrees.length > 0}
-                <div class="table-responsive">
-                    <Table hover class="table-sm align-middle">
-                        <thead class="table-light">
-                            <tr>
-                                <th style="width: 100px;">ID Pohon</th>
-                                <th>Nama Pohon</th>
-                                <th>Status Terakhir</th>
-                                <th>Update Terakhir</th>
-                                <th>Pelapor Terakhir</th>
-                                <th class="text-center">Aksi</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {#each filteredTrees as tree (tree.id)}
-                                {@const statusInfo = getStatusDisplay(tree.last_status)}
+                {#if viewMode === 'table'}
+                    {#if filteredTrees.length > 0}
+                    <div class="table-responsive">
+                        <Table hover class="table-sm align-middle">
+                            <thead class="table-light">
                                 <tr>
-                                    <td class="font-monospace">{tree.id?.substring(0,8) || 'N/A'}</td>
-                                    <td>{tree.name || '-'}</td>
-                                    <td>
-                                        <Badge color={statusInfo.color} pill class="px-2 py-1">
-                                            <Icon icon={statusInfo.icon} class="me-1" style="vertical-align: -1px;"/>
-                                            {statusInfo.badgeText}
-                                        </Badge>
-                                    </td>
-                                    <td>{tree.updatedDateFormatted || '-'}</td>
-                                    <td>{tree.userName || '-'}</td>
-                                    <td class="text-center">
-                                        {#if tree.img}
-                                        <Button size="sm" color="light" on:click={() => openPhotoModal(tree)} title="Lihat Foto" class="btn-icon me-1">
-                                            <Icon icon="mdi:image-outline"/>
-                                        </Button>
-                                        {/if}
-                                        <Button size="sm" color="light" on:click={() => openTimelineModal(tree)} title="Lihat Riwayat" class="btn-icon">
-                                            <Icon icon="mdi:timeline-text-outline"/>
-                                        </Button>
-                                    </td>
+                                    <th style="width: 100px;">ID Pohon</th>
+                                    <th>Nama Pohon</th>
+                                    <th>Status Terakhir</th>
+                                    <th>Update Terakhir</th>
+                                    <th>Pelapor Terakhir</th>
+                                    <th class="text-center">Aksi</th>
                                 </tr>
-                            {/each}
-                        </tbody>
-                    </Table>
-                </div>
-                {:else}
-                     <p class="text-muted text-center mt-4">
-                        {#if allTrees.length === 0 && !errorLoadingPage}
-                             Tidak ada data pohon untuk perusahaan ini.
-                        {:else if filteredTrees.length === 0 && searchTerm !== ""}
-                            Pohon dengan nama atau ID "{searchTerm}" tidak ditemukan.
-                        {:else if !errorLoadingPage}
-                             Memuat data pohon...
-                        {/if}
-                    </p>
+                            </thead>
+                            <tbody>
+                                {#each filteredTrees as tree (tree.id)}
+                                    {@const statusInfo = getStatusDisplay(tree.last_status)}
+                                    <tr>
+                                        <td class="font-monospace">{tree.id?.substring(0,8) || 'N/A'}</td>
+                                        <td>{tree.name || '-'}</td>
+                                        <td>
+                                            <Badge color={statusInfo.color} pill class="px-2 py-1">
+                                                <Icon icon={statusInfo.icon} class="me-1" style="vertical-align: -1px;"/>
+                                                {statusInfo.badgeText}
+                                            </Badge>
+                                        </td>
+                                        <td>{tree.updatedDateFormatted || '-'}</td>
+                                        <td>{tree.userName || '-'}</td>
+                                        <td class="text-center">
+                                            {#if tree.img}
+                                            <Button size="sm" color="light" on:click={() => openPhotoModal(tree)} title="Lihat Foto" class="btn-icon me-1">
+                                                <Icon icon="mdi:image-outline"/>
+                                            </Button>
+                                            {/if}
+                                            <Button size="sm" color="light" on:click={() => openTimelineModal(tree)} title="Lihat Riwayat" class="btn-icon">
+                                                <Icon icon="mdi:timeline-text-outline"/>
+                                            </Button>
+                                        </td>
+                                    </tr>
+                                {/each}
+                            </tbody>
+                        </Table>
+                    </div>
+                    {:else}
+                         <p class="text-muted text-center mt-4">
+                            {#if serverMessage && allTrees.length === 0}
+                                {serverMessage}
+                            {:else if allTrees.length === 0}
+                                Tidak ada data pohon untuk perusahaan ini.
+                            {:else if filteredTrees.length === 0 && searchTerm !== ""}
+                                Pohon dengan nama atau ID "{searchTerm}" tidak ditemukan.
+                            {/if}
+                        </p>
+                    {/if}
                 {/if}
             {/if}
         </CardBody>
@@ -282,10 +258,10 @@
             <ModalHeader toggle={togglePhotoModal}>Foto Pohon: {selectedTreeForPhoto.name}</ModalHeader>
             <ModalBody class="text-center">
                 {#if selectedTreeForPhoto.img}
-                    <img 
-                        src={selectedTreeForPhoto.img} 
-                        alt="Foto {selectedTreeForPhoto.name}" 
-                        class="img-fluid" 
+                    <img
+                        src={selectedTreeForPhoto.img}
+                        alt="Foto {selectedTreeForPhoto.name}"
+                        class="img-fluid"
                         style="max-height: 75vh; border-radius: 0.25rem;"
                         on:error={handleTreeImageError}
                     />
@@ -302,7 +278,7 @@
     {#if selectedTreeForTimeline}
         <Modal isOpen={isTimelineModalOpen} toggle={toggleTimelineModal} size="xl" centered scrollable>
             <ModalHeader toggle={toggleTimelineModal}>
-                Riwayat Pohon: {selectedTreeForTimeline.name} 
+                Riwayat Pohon GanoAI: {selectedTreeForTimeline.name}
                 <small class="text-muted ms-1">({selectedTreeForTimeline.id?.substring(0,8)})</small>
             </ModalHeader>
             <ModalBody>
@@ -311,9 +287,11 @@
                         <Spinner color="primary" />
                         <p class="mt-2">Memuat riwayat pohon...</p>
                     </div>
+                {:else if timelineError}
+                     <Alert color="danger">{timelineError}</Alert>
                 {:else if timelineDataForModal.length > 0}
-                    <LeftTimeline 
-                        timelineItems={timelineDataForModal} 
+                    <LeftTimeline
+                        timelineItems={timelineDataForModal}
                         treeName="" />
                 {:else}
                     <p class="text-muted text-center py-4">Tidak ada data riwayat untuk pohon ini.</p>

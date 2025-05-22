@@ -63,6 +63,7 @@
 		"dayjs": "^1.11.11",
 		"dropzone": "^6.0.0-beta.2",
 		"firebase": "^11.7.3",
+		"firebase-admin": "^13.4.0",
 		"flatpickr": "^4.6.13",
 		"gmaps": "^0.4.25",
 		"gridjs": "^6.2.0",

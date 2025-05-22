@@ -1,18 +1,26 @@
 <script lang="ts">
     import DefaultLayout from "$lib/layouts/DefaultLayout.svelte";
     import PageBreadcrumb from "$lib/components/PageBreadcrumb.svelte";
-    // PERBAIKAN 1: Tambahkan Card dan CardBody ke impor Sveltestrap
     import { Col, Row, Input, Button, ButtonGroup, Table, Modal, ModalHeader, ModalBody, Alert, Card, CardBody } from "@sveltestrap/sveltestrap";
     import ContactCard from "./components/ContactCard.svelte";
-    import type { User, FirebaseTimestamp } from "$lib/types";
-    import type { PageData } from './$types';
+    import type { User, AppError, UserSessionData, MenuItemType } from "$lib/types"; // FirebaseTimestamp tidak lagi relevan di sini
+    import type { PageData as ContactsGanoPageData } from './$types'; // Gunakan tipe spesifik dari $types
     import Icon from '@iconify/svelte';
+    import { page } from '$app/stores';
+    import { onMount } from 'svelte'; // onMount mungkin diperlukan jika ada inisialisasi sisi klien
 
-    export let data: PageData;
+    export let data: ContactsGanoPageData;
+
+    // Data untuk DefaultLayout dari root +layout.server.ts
+    let layoutPageData: { userSession: UserSessionData | undefined; menuItemsForLayout: MenuItemType[] };
+    $: layoutPageData = {
+        userSession: $page.data.userSession as UserSessionData | undefined,
+        menuItemsForLayout: ($page.data.menuItemsForLayout as MenuItemType[]) || []
+    };
 
     let users: User[] = [];
-    let companyId: string | null = null;
-    let errorLoading: string | undefined = undefined;
+    let activeCompanyId: string | null = null;
+    let serverMessage: string | null | undefined; // Untuk pesan dari server (mis. "tidak ada pengguna")
 
     let searchTerm = "";
     let viewMode: 'card' | 'table' = 'card';
@@ -22,13 +30,35 @@
 
     const defaultAvatarPath = '/images/users/avatar-default.png';
 
-    $: {
-        users = data.users || [];
-        companyId = data.companyId || null;
-        errorLoading = data.error;
-    }
+    // Error kritis dari SvelteKit (jika load function throw error)
+    let criticalError = $page.error as AppError | null;
 
-    $: filteredUsers = users.filter(user => 
+    // Fungsi untuk menginisialisasi atau memperbarui state dari data prop
+    function initializeState(currentData: ContactsGanoPageData | null | undefined) {
+        if (criticalError || !currentData) {
+             if (criticalError) { // Jika ada error fatal, reset data
+                users = [];
+                activeCompanyId = null;
+                serverMessage = null;
+            }
+            return;
+        }
+        users = currentData.users || [];
+        activeCompanyId = currentData.companyId || null;
+        serverMessage = currentData.message; // Ambil pesan dari server
+    }
+    
+    // Panggil initializeState saat 'data' atau 'criticalError' berubah
+    $: initializeState(criticalError ? null : data);
+
+    onMount(() => {
+        // Panggil juga saat mount untuk memastikan state terinisialisasi dengan benar
+        // terutama jika blok $: di atas tidak langsung dieksekusi dengan nilai `data` awal
+        initializeState(criticalError ? null : data);
+    });
+
+
+    $: filteredUsers = users.filter(user =>
         user.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         user.email?.toLowerCase().includes(searchTerm.toLowerCase())
     );
@@ -64,37 +94,40 @@
     }
 </script>
 
-<DefaultLayout {data}> 
-    <PageBreadcrumb title="Daftar Pengguna" subTitle="Aplikasi" />
+<DefaultLayout data={layoutPageData}>
+    <PageBreadcrumb title="Pengguna GanoAI" subTitle="Aplikasi GanoAI" />
 
-    {#if errorLoading}
-        <Alert color="danger" class="mt-2">{errorLoading}</Alert>
+    {#if criticalError}
+        <Alert color="danger" class="mt-2">
+            <h4 class="alert-heading"><Icon icon="mdi:alert-octagon-outline" /> Terjadi Kesalahan</h4>
+            {criticalError.message || "Gagal memuat data pengguna."}
+        </Alert>
     {/if}
 
-    <Card class="mt-3">
+    {#if !criticalError} <Card class="mt-3">
         <CardBody>
             <Row class="mb-3 gy-2 align-items-center">
                 <Col md="8">
-                    <Input 
-                        type="text" 
-                        placeholder="Cari pengguna berdasarkan nama atau email..." 
+                    <Input
+                        type="text"
+                        placeholder="Cari pengguna berdasarkan nama atau email..."
                         bind:value={searchTerm}
                         class="form-control-sm"
                     />
                 </Col>
                 <Col md="4" class="text-md-end">
                     <ButtonGroup size="sm">
-                        <Button 
-                            color="primary" 
-                            outline={viewMode !== 'card'} 
+                        <Button
+                            color="primary"
+                            outline={viewMode !== 'card'}
                             on:click={() => viewMode = 'card'}
                             title="Tampilan Kartu"
                         >
                             <Icon icon="mdi:view-grid-outline" />
                         </Button>
-                        <Button 
-                            color="primary" 
-                            outline={viewMode !== 'table'} 
+                        <Button
+                            color="primary"
+                            outline={viewMode !== 'table'}
                             on:click={() => viewMode = 'table'}
                             title="Tampilan Tabel"
                         >
@@ -107,18 +140,18 @@
             {#if viewMode === 'card'}
                 <Row class="row-cols-1 row-cols-sm-2 row-cols-lg-3 row-cols-xl-4 g-3">
                     {#each filteredUsers as user (user.id)}
-                        <Col class="d-flex align-items-stretch"> 
+                        <Col class="d-flex align-items-stretch">
                             <ContactCard {user} onViewProfile={openUserProfileModal} class="w-100"/>
                         </Col>
                     {:else}
                         <Col>
                             <p class="text-muted text-center mt-4">
-                                {#if users.length === 0 && !errorLoading}
-                                    Tidak ada pengguna untuk perusahaan ini.
+                                {#if serverMessage && users.length === 0}
+                                    {serverMessage}
+                                {:else if users.length === 0}
+                                    Memuat data pengguna atau tidak ada data...
                                 {:else if filteredUsers.length === 0 && searchTerm !== ""}
                                     Pengguna dengan nama atau email "{searchTerm}" tidak ditemukan.
-                                {:else if !errorLoading}
-                                    Memuat data pengguna...
                                 {/if}
                             </p>
                         </Col>
@@ -144,9 +177,9 @@
                             {#each filteredUsers as user (user.id)}
                                 <tr>
                                     <td>
-                                        <img 
-                                            src={user.avatar || defaultAvatarPath} 
-                                            alt={user.name} 
+                                        <img
+                                            src={user.avatar || defaultAvatarPath}
+                                            alt={user.name}
                                             class="rounded-circle avatar-sm"
                                             on:error={handleImageError}
                                         />
@@ -166,35 +199,36 @@
                     </Table>
                 </div>
                 {:else}
-                     <p class="text-muted text-center mt-4">
-                        {#if users.length === 0 && !errorLoading}
-                            Tidak ada pengguna untuk perusahaan ini.
+                    <p class="text-muted text-center mt-4">
+                        {#if serverMessage && users.length === 0}
+                             {serverMessage}
+                        {:else if users.length === 0}
+                            Memuat data pengguna atau tidak ada data...
                         {:else if filteredUsers.length === 0 && searchTerm !== ""}
                             Pengguna dengan nama atau email "{searchTerm}" tidak ditemukan.
-                        {:else if !errorLoading}
-                             Memuat data pengguna...
                         {/if}
                     </p>
                 {/if}
             {/if}
         </CardBody>
     </Card>
+    {/if}
 
     {#if selectedUserForModal}
         <Modal isOpen={isUserProfileModalOpen} toggle={toggleUserProfileModal} size="lg" centered scrollable>
             <ModalHeader toggle={toggleUserProfileModal} class="bg-light">
                 <div class="d-flex align-items-center">
                     <Icon icon="mdi:account-circle-outline" class="fs-4 me-2 text-primary"/>
-                    Profil Pengguna: <span class="fw-medium ms-1">{selectedUserForModal.name}</span>
+                    Profil Pengguna GanoAI: <span class="fw-medium ms-1">{selectedUserForModal.name}</span>
                 </div>
             </ModalHeader>
             <ModalBody class="p-4">
                 <Row>
                     <Col md="4" class="text-center mb-3 mb-md-0">
-                        <img 
-                            src={selectedUserForModal.avatar || defaultAvatarPath} 
-                            alt={selectedUserForModal.name} 
-                            class="img-thumbnail rounded-circle shadow-sm" 
+                        <img
+                            src={selectedUserForModal.avatar || defaultAvatarPath}
+                            alt={selectedUserForModal.name}
+                            class="img-thumbnail rounded-circle shadow-sm"
                             style="width: 150px; height: 150px; object-fit: cover;"
                             on:error={handleImageError}
                         />
@@ -222,12 +256,17 @@
                         </div>
                         <div class="mb-2">
                             <Icon icon="mdi:update" class="me-2 text-muted" style="vertical-align: -2px;"/>
-                            <span class="text-muted me-1">Terakhir Update Data:</span>
+                            <span class="text-muted me-1">Update Terakhir Data Pengguna:</span>
                             <strong>{formatDate(selectedUserForModal.lastUpdated)}</strong>
+                        </div>
+                         <div class="mb-2">
+                            <Icon icon="mdi:calendar-account-outline" class="me-2 text-muted" style="vertical-align: -2px;"/>
+                            <span class="text-muted me-1">Akun Dibuat:</span>
+                            <strong>{formatDate(selectedUserForModal.date?.createdDate)}</strong>
                         </div>
                         <div class="mb-2">
                             <Icon icon="mdi:account-key-outline" class="me-2 text-muted" style="vertical-align: -2px;"/>
-                            <span class="text-muted me-1">ID Pengguna:</span>
+                            <span class="text-muted me-1">ID Pengguna GanoAI:</span>
                             <span class="font-monospace fs-sm">{selectedUserForModal.userId}</span>
                         </div>
                         <div class="mb-2">
@@ -262,5 +301,4 @@
             </div>
         </Modal>
     {/if}
-
 </DefaultLayout>

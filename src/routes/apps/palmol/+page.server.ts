@@ -1,31 +1,53 @@
 // src/routes/apps/palmol/+page.server.ts
 import type { PageServerLoad } from './$types';
-import { ripenessDb } from '$lib/firebase/ripenessClient';
-import { collection, query, where, getDocs, orderBy, type Timestamp as FirebaseTimestampType } from 'firebase/firestore'; // Impor Timestamp
+import { ripenessDbAdmin } from '$lib/server/adminRipeness';
+import admin from 'firebase-admin';
 import { error as svelteKitError, redirect } from '@sveltejs/kit';
-import type { PKS, UserSessionData, FirebaseTimestamp } from '$lib/types'; // Pastikan FirebaseTimestamp diimpor
+// Pastikan tipe PKS dan PKSRawDates (atau nama yang Anda gunakan) diimpor dari $lib/types
+import type { PKS, UserSessionData, PKSRawDates } from '$lib/types';
+import dayjs from 'dayjs';
+import 'dayjs/locale/id';
+dayjs.locale('id');
 
-// Fungsi helper untuk format tanggal (jika belum ada di file ini)
-function formatDisplayDate(timestamp: FirebaseTimestampType | undefined | null): string {
-    if (!timestamp || !timestamp.toDate) return 'N/A';
-    return timestamp.toDate().toLocaleDateString('id-ID', {
-        year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
-    });
+function formatAdminTimestampToDisplay(timestamp: admin.firestore.Timestamp | string | undefined | null): string {
+    if (!timestamp) return 'N/A';
+    try {
+        const dateObj = (typeof timestamp === 'string') ? new Date(timestamp) : timestamp.toDate();
+        if (isNaN(dateObj.getTime())) return 'Invalid Date';
+        return dayjs(dateObj).format('DD MMM YYYY, HH:mm'); // Format lebih panjang untuk tampilan
+    } catch (e) {
+        console.error("Error formatting admin timestamp:", e);
+        return 'Format Error';
+    }
 }
 
+function serializeAdminTimestamp(timestamp: admin.firestore.Timestamp | undefined | null): string | null {
+    if (timestamp && typeof timestamp.toDate === 'function') {
+        return timestamp.toDate().toISOString();
+    }
+    return null;
+}
 
 export const load: PageServerLoad = async ({ locals }) => {
     const userSession = locals.user as UserSessionData | undefined;
 
-    if (!userSession || !userSession.hasRipenessAccess || !userSession.ripenessCompanyId) {
+    if (!userSession?.hasRipenessAccess || !userSession.ripenessCompanyId) {
         throw redirect(303, '/auth/sign-in');
     }
     const companyIdToLoad = userSession.ripenessCompanyId;
 
+    if (!ripenessDbAdmin) {
+        console.error("[Palmol PKS List Load] Ripeness Admin DB tidak terinisialisasi!");
+        throw svelteKitError(503, "Layanan data PKS tidak tersedia saat ini.");
+    }
+    const db = ripenessDbAdmin;
+
+    console.log(`[Palmol PKS List Load] Memuat daftar PKS untuk Ripeness company: ${companyIdToLoad}`);
+
     try {
-        const pksColRef = collection(ripenessDb, 'pks');
-        const q = query(pksColRef, where('companyId', '==', companyIdToLoad), orderBy('pksName', 'asc'));
-        const pksSnapshot = await getDocs(q);
+        const pksColRef = db.collection('pks');
+        const q = pksColRef.where('companyId', '==', companyIdToLoad).orderBy('pksName', 'asc');
+        const pksSnapshot = await q.get();
 
         if (pksSnapshot.empty) {
             return {
@@ -36,29 +58,46 @@ export const load: PageServerLoad = async ({ locals }) => {
 
         const pksList = pksSnapshot.docs.map(doc => {
             const data = doc.data();
-            // Ambil dan format updatedDate dari PKS jika ada
-            const pksUpdatedDate = data.date?.updatedDate as FirebaseTimestampType | undefined || data.lastUpdated as FirebaseTimestampType | undefined;
+            const createdDateFirestore = data.date?.createdDate as admin.firestore.Timestamp | undefined;
+            const updatedDateFirestore = data.date?.updatedDate as admin.firestore.Timestamp | undefined;
+            const validDateFirestore = data.date?.validDate as admin.firestore.Timestamp | undefined;
+            const lastUpdatedFirestore = data.lastUpdated as admin.firestore.Timestamp | undefined;
 
-            return {
+            const relevantDateForUpdateDisplay = updatedDateFirestore || lastUpdatedFirestore || createdDateFirestore;
+
+            const pksItem: PKS = {
                 id: doc.id,
                 pksId: data.pksId || doc.id,
                 companyId: data.companyId,
-                pksName: data.pksName || `PKS Tanpa Nama (${doc.id.substring(0,6)})`,
+                pksName: data.pksName || `PKS Tanpa Nama (${doc.id.substring(0, 6)})`,
                 avatar: data.avatar || null,
                 address: data.address || 'Alamat tidak tersedia',
-                email: data.email || null, // Tambahkan email
-                phoneNumber: data.phoneNumber || null, // Tambahkan phoneNumber
-                updatedDateFormatted: formatDisplayDate(pksUpdatedDate), // Tambahkan tanggal update PKS
-                membership: data.membership || null // Tambahkan membership jika ada
-            } as PKS; // Pastikan tipe PKS di $lib/types mencakup field baru ini
+                email: data.email || null,
+                phoneNumber: data.phoneNumber || null,
+                location: data.location,
+                membership: data.membership || null,
+                
+                // Ini adalah string yang sudah diformat untuk tampilan langsung
+                createdDateFormatted: formatAdminTimestampToDisplay(createdDateFirestore),
+                updatedDateFormatted: formatAdminTimestampToDisplay(relevantDateForUpdateDisplay),
+
+                // Ini adalah string ISO untuk objek 'date' (jika tipe PKS.date sudah diubah ke PKSRawDates)
+                date: {
+                    createdDate: serializeAdminTimestamp(createdDateFirestore),
+                    updatedDate: serializeAdminTimestamp(updatedDateFirestore), // atau relevantDateForUpdate jika lebih cocok
+                    validDate: serializeAdminTimestamp(validDateFirestore)
+                } as PKSRawDates // Lakukan cast ke tipe yang benar jika PKS.date didefinisikan
+            };
+            return pksItem;
         });
 
         return {
-            pksList: pksList
+            pksList: pksList,
+            message: null
         };
 
-    } catch (errorObj: any) {
-        console.error("[Palmol PKS List] Error mengambil daftar PKS:", errorObj);
-        throw svelteKitError(500, `Gagal memuat daftar PKS: ${errorObj.message}`);
+    } catch (error: any) {
+        console.error("[Palmol PKS List] Error mengambil daftar PKS:", error);
+        throw svelteKitError(500, `Gagal memuat daftar PKS: ${error.message}`);
     }
 };

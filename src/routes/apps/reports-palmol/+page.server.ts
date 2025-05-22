@@ -1,33 +1,46 @@
+// src/routes/apps/reports-palmol/+page.server.ts
 import type { PageServerLoad } from './$types';
-import { ripenessDb } from '$lib/firebase/ripenessClient';
-import {
-    collection,
-    doc,
-    getDoc,
-    getDocs,
-    query,
-    where,
-    orderBy,
-    Timestamp,
-    type Timestamp as FirebaseTimestampType,
-    type QueryDocumentSnapshot,
-    type DocumentData
-} from 'firebase/firestore';
+import { ripenessDbAdmin as ripenessDbAdminInstance } from '$lib/server/adminRipeness'; // Ganti nama impor
+import admin from 'firebase-admin';
 import { error as svelteKitError, redirect } from '@sveltejs/kit';
-import type { PKSReport, UserSessionData, User, PKSUser, PKS, PKSTeam, AppError } from '$lib/types';
+import type { PKSReport, UserSessionData, PKS, PKSTeam, PKSUser } from '$lib/types';
+import dayjs from 'dayjs';
+import 'dayjs/locale/id';
+dayjs.locale('id');
 
 interface FilterChoice {
     id: string;
     name: string;
 }
 
+function serializeAdminTimestamp(timestamp: admin.firestore.Timestamp | undefined | null): string | null {
+    if (timestamp && typeof timestamp.toDate === 'function') {
+        return timestamp.toDate().toISOString();
+    }
+    return null;
+}
+
+function formatDisplayDate(isoString: string | null | undefined): string {
+    if (!isoString) return 'N/A';
+    return dayjs(isoString).format('DD MMM YY, HH:mm');
+}
+
 export const load: PageServerLoad = async ({ url, locals }) => {
     const userSession = locals.user as UserSessionData | undefined;
 
-    if (!userSession || !userSession.hasRipenessAccess || !userSession.ripenessCompanyId) {
+    if (!userSession?.hasRipenessAccess || !userSession.ripenessCompanyId) {
         throw redirect(303, '/auth/sign-in');
     }
     const companyIdToLoad = userSession.ripenessCompanyId;
+
+    // Pengecekan null untuk instance Admin SDK
+    if (!ripenessDbAdminInstance) { // Menggunakan nama impor yang baru
+        console.error("[ReportsPalmol Server Load] Ripeness Admin DB tidak terinisialisasi!");
+        throw svelteKitError(503, "Layanan data laporan Palmol tidak tersedia saat ini (DB Admin Error).");
+    }
+    // Setelah pengecekan, kita bisa yakin ripenessDbAdminInstance tidak null.
+    // Assign ke variabel const baru agar TypeScript melacaknya sebagai non-null.
+    const db = ripenessDbAdminInstance;
 
     const startDateStr = url.searchParams.get('startDate');
     const endDateStr = url.searchParams.get('endDate');
@@ -41,159 +54,149 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     let isTeamFiltered = !!(filterPksId && filterTeamId);
 
     if (startDateStr) {
-        const parsedStart = new Date(startDateStr + "T00:00:00Z");
-        if (!isNaN(parsedStart.getTime())) {
-            filterStartDateForQuery = parsedStart;
-            isDateEffectivelyFiltered = true;
-        }
+        const parsedStart = dayjs(startDateStr);
+        if (parsedStart.isValid()) { filterStartDateForQuery = parsedStart.startOf('day').toDate(); isDateEffectivelyFiltered = true; }
     }
-
     if (endDateStr) {
-        const parsedEnd = new Date(endDateStr + "T23:59:59.999Z");
-        if (!isNaN(parsedEnd.getTime())) {
-            filterEndDateForQuery = parsedEnd;
-            isDateEffectivelyFiltered = true;
-        }
+        const parsedEnd = dayjs(endDateStr);
+        if (parsedEnd.isValid()) { filterEndDateForQuery = parsedEnd.endOf('day').toDate(); isDateEffectivelyFiltered = true; }
     }
-
     if (filterStartDateForQuery && !filterEndDateForQuery && startDateStr) {
-        filterEndDateForQuery = new Date();
-        filterEndDateForQuery.setUTCHours(23, 59, 59, 999);
+        filterEndDateForQuery = dayjs().endOf('day').toDate();
     }
-
     if (filterStartDateForQuery && filterEndDateForQuery && filterStartDateForQuery > filterEndDateForQuery) {
-        filterStartDateForQuery = undefined;
-        filterEndDateForQuery = undefined;
-        isDateEffectivelyFiltered = false;
+        filterStartDateForQuery = undefined; filterEndDateForQuery = undefined; isDateEffectivelyFiltered = false;
     }
-    
     const finalIsCurrentlyFiltered = isDateEffectivelyFiltered || isPksFiltered || isTeamFiltered;
 
     try {
-        const pksQueryForFilterList = query(collection(ripenessDb, 'pks'), where('companyId', '==', companyIdToLoad), orderBy('pksName', 'asc'));
-        const pksFilterSnapshots = await getDocs(pksQueryForFilterList);
+        const pksCollectionRef = db.collection('pks'); // Menggunakan 'db'
+        let pksBaseQuery: admin.firestore.Query = pksCollectionRef
+            .where('companyId', '==', companyIdToLoad)
+            .orderBy('pksName', 'asc');
+
+        const pksFilterSnapshots = await pksBaseQuery.get();
         const pksListForFilter: FilterChoice[] = pksFilterSnapshots.docs.map(d => ({
             id: d.id,
-            name: (d.data() as PKS).pksName || `PKS (${d.id.substring(0,6)})`
+            name: (d.data() as PKS).pksName || `PKS (${d.id.substring(0, 6)})`
         }));
 
         let teamListForFilter: FilterChoice[] = [];
         let currentPksNameForDisplay: string | undefined = "Semua PKS";
         let currentTeamNameForDisplay: string | undefined = "Semua Tim";
-        let pksDocsToQueryFrom: QueryDocumentSnapshot<DocumentData>[] = [];
+        let pksDocsToQueryReportsFrom: admin.firestore.QueryDocumentSnapshot[] = [];
 
         if (filterPksId) {
-            const pksDocRef = doc(ripenessDb, 'pks', filterPksId);
-            const pksDocSnap = await getDoc(pksDocRef);
-            if (pksDocSnap.exists() && pksDocSnap.data()?.companyId === companyIdToLoad) {
-                pksDocsToQueryFrom.push(pksDocSnap);
-                currentPksNameForDisplay = (pksDocSnap.data() as PKS).pksName || `PKS (${filterPksId.substring(0,6)})`;
-                const teamsQuery = query(collection(ripenessDb, `pks/${filterPksId}/teams`), orderBy('teamName', 'asc'));
-                const teamsSnapshot = await getDocs(teamsQuery);
+            const pksDocRef = db.collection('pks').doc(filterPksId); // Menggunakan 'db'
+            const pksDocSnap = await pksDocRef.get();
+            if (pksDocSnap.exists && pksDocSnap.data()?.companyId === companyIdToLoad) {
+                pksDocsToQueryReportsFrom.push(pksDocSnap as admin.firestore.QueryDocumentSnapshot);
+                currentPksNameForDisplay = (pksDocSnap.data() as PKS).pksName || `PKS (${filterPksId.substring(0, 6)})`;
+
+                const teamsCollectionRef = db.collection(`pks/${filterPksId}/teams`); // Menggunakan 'db'
+                const teamsQuery = teamsCollectionRef.orderBy('teamName', 'asc');
+                const teamsSnapshot = await teamsQuery.get();
                 teamListForFilter = teamsSnapshot.docs.map(d => ({
                     id: d.id,
-                    name: (d.data() as PKSTeam).teamName || `Tim (${d.id.substring(0,6)})`
+                    name: (d.data() as PKSTeam).teamName || `Tim (${d.id.substring(0, 6)})`
                 }));
 
                 if (filterTeamId) {
                     const teamDetail = teamListForFilter.find(t => t.id === filterTeamId);
-                    currentTeamNameForDisplay = teamDetail?.name || (filterTeamId ? `Tim (${filterTeamId.substring(0,6)})` : "Semua Tim");
+                    currentTeamNameForDisplay = teamDetail?.name || (filterTeamId ? `Tim (${filterTeamId.substring(0, 6)})` : "Semua Tim");
                 } else {
                     currentTeamNameForDisplay = "Semua Tim di PKS ini";
                 }
             } else {
-                isPksFiltered = true; 
-                isTeamFiltered = false; 
+                isPksFiltered = true; isTeamFiltered = false;
                 currentPksNameForDisplay = "PKS Tidak Valid";
-                pksDocsToQueryFrom = [];
+                pksDocsToQueryReportsFrom = [];
                 teamListForFilter = [];
             }
         } else {
-            pksDocsToQueryFrom = pksFilterSnapshots.docs; 
+            pksDocsToQueryReportsFrom = pksFilterSnapshots.docs as admin.firestore.QueryDocumentSnapshot[];
         }
-        
-        if (pksDocsToQueryFrom.length === 0 && isPksFiltered && filterPksId) {
-             return {
-                reportList: [], totalBeratKeseluruhan: 0, message: 'PKS yang dipilih tidak valid atau tidak memiliki laporan.',
-                pksListForFilter, teamListForFilter, startDate: startDateStr || undefined, endDate: endDateStr || undefined, 
-                selectedPksId: filterPksId || undefined, selectedTeamId: filterTeamId || undefined,
-                isCurrentlyFiltered: finalIsCurrentlyFiltered, currentPksNameForDisplay, currentTeamNameForDisplay,
-                companyName: userSession.email 
-            };
-        }
-        if (pksDocsToQueryFrom.length === 0 && !isPksFiltered && pksFilterSnapshots.empty) {
+
+        if (pksListForFilter.length === 0 && !filterPksId) {
              return {
                 reportList: [], totalBeratKeseluruhan: 0, message: 'Tidak ada PKS yang terdaftar untuk perusahaan Anda.',
-                pksListForFilter, teamListForFilter, startDate: startDateStr || undefined, endDate: endDateStr || undefined, 
-                selectedPksId: filterPksId || undefined, selectedTeamId: filterTeamId || undefined,
-                isCurrentlyFiltered: finalIsCurrentlyFiltered, currentPksNameForDisplay, currentTeamNameForDisplay,
+                pksListForFilter, teamListForFilter, startDate: startDateStr, endDate: endDateStr,
+                selectedPksId: filterPksId, selectedTeamId: filterTeamId,
+                isCurrentlyFiltered: finalIsCurrentlyFiltered, currentPksNameForDisplay: "Tidak Ada PKS", currentTeamNameForDisplay,
+                companyName: userSession.email
+            };
+        }
+        if (filterPksId && pksDocsToQueryReportsFrom.length === 0) {
+             return {
+                reportList: [], totalBeratKeseluruhan: 0, message: `PKS dengan ID "${filterPksId}" tidak ditemukan atau bukan milik Anda.`,
+                pksListForFilter, teamListForFilter: [], startDate: startDateStr, endDate: endDateStr,
+                selectedPksId: filterPksId, selectedTeamId: filterTeamId,
+                isCurrentlyFiltered: finalIsCurrentlyFiltered, currentPksNameForDisplay: "PKS Tidak Valid", currentTeamNameForDisplay: "N/A",
                 companyName: userSession.email
             };
         }
 
         const allReportProcessingPromises: Promise<PKSReport[]>[] = [];
         const usersCache = new Map<string, string>();
-        const teamsCacheInternal = new Map<string, string>();
+        const teamsCacheOnServer = new Map<string, string>();
 
-        for (const pksDoc of pksDocsToQueryFrom) {
+        for (const pksDoc of pksDocsToQueryReportsFrom) {
             const currentPksId = pksDoc.id;
-            const currentPksNameLoop = (pksDoc.data() as PKS).pksName || `PKS (${currentPksId.substring(0,6)})`;
-            const reportsColRef = collection(ripenessDb, `pks/${currentPksId}/reports`);
-            let currentReportsQuery = query(reportsColRef);
+            const currentPksNameLoop = (pksDoc.data() as PKS).pksName || `PKS (${currentPksId.substring(0, 6)})`;
+            const reportsColRef = db.collection(`pks/${currentPksId}/reports`); // Menggunakan 'db'
+            let currentReportsQuery: admin.firestore.Query = reportsColRef;
 
             if (filterPksId && filterTeamId && filterPksId === currentPksId) {
-                currentReportsQuery = query(currentReportsQuery, where('teamId', '==', filterTeamId));
+                currentReportsQuery = currentReportsQuery.where('teamId', '==', filterTeamId);
             }
-
             if (filterStartDateForQuery) {
-                currentReportsQuery = query(currentReportsQuery, where('date', '>=', Timestamp.fromDate(filterStartDateForQuery)));
+                currentReportsQuery = currentReportsQuery.where('date', '>=', admin.firestore.Timestamp.fromDate(filterStartDateForQuery));
             }
             if (filterEndDateForQuery) {
-                currentReportsQuery = query(currentReportsQuery, where('date', '<=', Timestamp.fromDate(filterEndDateForQuery)));
+                currentReportsQuery = currentReportsQuery.where('date', '<=', admin.firestore.Timestamp.fromDate(filterEndDateForQuery));
             }
-            
-            const pksReportsPromise = getDocs(currentReportsQuery).then(async (reportSnapshot) => {
-                const reportsFromThisPks: Promise<PKSReport>[] = reportSnapshot.docs.map(async (reportDoc) => {
+            currentReportsQuery = currentReportsQuery.orderBy('date', 'desc');
+
+            const pksReportsPromise = currentReportsQuery.get().then(async (reportSnapshot) => {
+                const reportsFromThisPksPromises: Promise<PKSReport>[] = reportSnapshot.docs.map(async (reportDoc) => {
                     const data = reportDoc.data();
                     const berat = Number(data.jumlahBerat) || 0;
-                    let formattedDate = 'N/A', originalDateSerializable: string | null = null;
-                    const reportDateFirestore = data.date as FirebaseTimestampType | undefined;
-
-                    if (reportDateFirestore?.toDate) {
-                        const jsDate = reportDateFirestore.toDate();
-                        formattedDate = jsDate.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-                        originalDateSerializable = jsDate.toISOString();
-                    }
+                    const reportDateFirestore = data.date as admin.firestore.Timestamp | undefined;
+                    const originalDateSerializable = serializeAdminTimestamp(reportDateFirestore);
+                    const formattedDate = formatDisplayDate(originalDateSerializable);
 
                     let userName = data.userId || 'Tidak Diketahui';
                     if (data.userId) {
                         if (usersCache.has(data.userId)) { userName = usersCache.get(data.userId)!; }
-                        else { try {
-                                const userDocRef = doc(ripenessDb, 'pksUsers', data.userId);
-                                const userDocSnap = await getDoc(userDocRef);
-                                if (userDocSnap.exists()) {
+                        else {
+                            try {
+                                const userDocRef = db.collection('pksUsers').doc(data.userId); // Menggunakan 'db'
+                                const userDocSnap = await userDocRef.get();
+                                if (userDocSnap.exists) {
                                     userName = (userDocSnap.data() as PKSUser).name || data.userId;
                                     usersCache.set(data.userId, userName);
                                 } else { usersCache.set(data.userId, data.userId); }
-                            } catch (e) { console.error("Error fetching user:", data.userId, e); usersCache.set(data.userId, data.userId); }
+                            } catch (e) { console.error("Error fetching user for report:", data.userId, e); usersCache.set(data.userId, data.userId); }
                         }
                     }
 
-                    let teamNameResolved = data.teamId ? `Tim (${data.teamId.substring(0,6)})` : 'Laporan Level PKS';
+                    let teamNameResolved = data.teamId ? `Tim (${data.teamId.substring(0, 6)})` : (currentPksId && !data.teamId ? 'Laporan Langsung PKS' : 'N/A');
                     if (data.teamId) {
                         const teamCacheKey = `${currentPksId}_${data.teamId}`;
-                        if (teamsCacheInternal.has(teamCacheKey)) { teamNameResolved = teamsCacheInternal.get(teamCacheKey)!; }
-                        else { try {
-                                const teamDocRef = doc(ripenessDb, `pks/${currentPksId}/teams`, data.teamId);
-                                const teamDocSnap = await getDoc(teamDocRef);
-                                if (teamDocSnap.exists()) {
+                        if (teamsCacheOnServer.has(teamCacheKey)) { teamNameResolved = teamsCacheOnServer.get(teamCacheKey)!; }
+                        else {
+                            try {
+                                // INI BARIS YANG ERROR (LINE 175 di kode asli Anda, sekarang mungkin berbeda)
+                                const teamDocRef = db.collection(`pks/${currentPksId}/teams`).doc(data.teamId); // Menggunakan 'db'
+                                const teamDocSnap = await teamDocRef.get();
+                                if (teamDocSnap.exists) {
                                     teamNameResolved = (teamDocSnap.data() as PKSTeam).teamName || teamNameResolved;
-                                    teamsCacheInternal.set(teamCacheKey, teamNameResolved);
-                                } else { teamsCacheInternal.set(teamCacheKey, teamNameResolved); }
-                            } catch (e) { console.error("Error fetching team:", data.teamId, e); teamsCacheInternal.set(teamCacheKey, teamNameResolved); }
+                                    teamsCacheOnServer.set(teamCacheKey, teamNameResolved);
+                                } else { teamsCacheOnServer.set(teamCacheKey, teamNameResolved); }
+                            } catch (e) { console.error("Error fetching team for report:", data.teamId, e); teamsCacheOnServer.set(teamCacheKey, teamNameResolved); }
                         }
                     }
-                    
+
                     return {
                         id: reportDoc.id, pksId: currentPksId, pksName: currentPksNameLoop,
                         teamId: data.teamId, teamName: teamNameResolved, date: formattedDate,
@@ -201,7 +204,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
                         jumlahBerat: berat, userId: data.userId, userName: userName,
                     } as PKSReport;
                 });
-                return Promise.all(reportsFromThisPks);
+                return Promise.all(reportsFromThisPksPromises);
             });
             allReportProcessingPromises.push(pksReportsPromise);
         }
@@ -218,7 +221,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
         const totalBeratKeseluruhan = combinedReportList.reduce((acc, report) => acc + (report.jumlahBerat || 0), 0);
         let message: string | null = null;
         if (combinedReportList.length === 0) {
-            message = finalIsCurrentlyFiltered ? 'Tidak ada laporan untuk filter yang dipilih.' : 'Belum ada laporan yang ditemukan.';
+            message = finalIsCurrentlyFiltered ? 'Tidak ada laporan untuk filter yang dipilih.' : 'Belum ada laporan yang ditemukan untuk perusahaan Anda.';
         }
 
         return {
@@ -228,14 +231,11 @@ export const load: PageServerLoad = async ({ url, locals }) => {
             selectedTeamId: filterTeamId || undefined,
             isCurrentlyFiltered: finalIsCurrentlyFiltered,
             currentPksNameForDisplay, currentTeamNameForDisplay,
-            companyName: userSession.email 
+            companyName: userSession.email
         };
 
-    } catch (errorObj: any) {
-        console.error(`[AllPalmolReports Load] Gagal memuat laporan:`, errorObj);
-        if (errorObj.status && typeof errorObj.message === 'string') {
-             throw errorObj;
-        }
-        throw svelteKitError(500, `Gagal memuat semua laporan Palmol: ${errorObj.message || 'Kesalahan tidak diketahui'}`);
+    } catch (error: any) {
+        console.error(`[ReportsPalmol Server Load] Gagal memuat laporan:`, error);
+        throw svelteKitError(500, `Gagal memuat laporan Palmol: ${error.message || 'Kesalahan tidak diketahui'}`);
     }
 };
