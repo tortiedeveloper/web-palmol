@@ -1,11 +1,12 @@
 // src/routes/apps/tree-gano/+page.server.ts
 import { redirect, error as svelteKitError } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
-import type { Tree, User, UserSessionData } from '$lib/types';
-import { ganoAIDbAdmin } from '$lib/server/adminGanoAI'; // Menggunakan Admin SDK
-import admin from 'firebase-admin'; // Untuk tipe Timestamp Admin SDK
+import type { Tree, UserSessionData, TreeGeoJSONProperties, GeoLocation } from '$lib/types';
+import { ganoAIDbAdmin } from '$lib/server/adminGanoAI';
+import admin from 'firebase-admin';
+import type { FeatureCollection, Point } from 'geojson';
+import dayjs from 'dayjs';
 
-// Helper untuk serialisasi Firebase Admin Timestamp
 function serializeAdminTimestamp(timestamp: admin.firestore.Timestamp | undefined | null): string | null {
     if (timestamp && typeof timestamp.toDate === 'function') {
         return timestamp.toDate().toISOString();
@@ -13,7 +14,6 @@ function serializeAdminTimestamp(timestamp: admin.firestore.Timestamp | undefine
     return null;
 }
 
-// Helper untuk format tanggal tampilan
 function formatDisplayDate(isoDateString: string | null | undefined): string {
     if (!isoDateString) return 'N/A';
     try {
@@ -25,46 +25,53 @@ function formatDisplayDate(isoDateString: string | null | undefined): string {
     }
 }
 
-export const load: PageServerLoad = async ({ locals }) => {
+export const load: PageServerLoad = async ({ locals, url }) => {
     const userSession = locals.user as UserSessionData | undefined;
-
     if (!userSession?.hasGanoAIAccess || !userSession.ganoAICompanyId) {
-        console.warn("[TreeGano Server Load] Sesi GanoAI tidak valid atau ganoAICompanyId tidak ada, redirecting.");
         throw redirect(303, '/auth/sign-in');
     }
     const companyIdToLoad = userSession.ganoAICompanyId;
-
     if (!ganoAIDbAdmin) {
-        console.error("[TreeGano Server Load] GanoAI Admin DB tidak terinisialisasi!");
         throw svelteKitError(503, "Layanan data pohon GanoAI tidak tersedia saat ini.");
     }
 
-    console.log(`[TreeGano Server Load] Memuat data pohon untuk perusahaan GanoAI ID: ${companyIdToLoad}`);
+    const filterStatus = url.searchParams.get('status');
+    const startDateStr = url.searchParams.get('startDate');
+    const endDateStr = url.searchParams.get('endDate');
 
     try {
-        // 1. Ambil data pengguna untuk mapping userName
         const usersMap = new Map<string, string>();
-        const usersColRef = ganoAIDbAdmin.collection('users'); // Asumsi koleksi 'users' di GanoAI
+        const usersColRef = ganoAIDbAdmin.collection('users');
         const companyUsersQuery = usersColRef.where('companyId', '==', companyIdToLoad);
         const usersSnapshot = await companyUsersQuery.get();
         usersSnapshot.forEach(userDoc => {
-            const userData = userDoc.data();
-            usersMap.set(userDoc.id, userData.name || 'Tanpa Nama');
+            usersMap.set(userDoc.id, userDoc.data().name || 'Tanpa Nama');
         });
 
-        // 2. Ambil data pohon
         const treesColRef = ganoAIDbAdmin.collection(`company/${companyIdToLoad}/tree`);
-        const q = treesColRef.orderBy('name', 'asc');
+        let q: admin.firestore.Query = treesColRef;
+
+        if (filterStatus && ['sick', 'recovered', 'maintenance'].includes(filterStatus)) {
+            q = q.where('last_status', '==', filterStatus);
+        }
+        if (startDateStr) {
+            q = q.where('date.updatedDate', '>=', dayjs(startDateStr).startOf('day').toDate());
+        }
+        if (endDateStr) {
+            q = q.where('date.updatedDate', '<=', dayjs(endDateStr).endOf('day').toDate());
+        }
+
+        q = q.orderBy('date.updatedDate', 'desc');
+
         const querySnapshot = await q.get();
         const treesList: Tree[] = [];
+        const treeFeaturesForMap: any[] = [];
+        const locations: GeoLocation[] = [];
 
         querySnapshot.forEach((doc) => {
             const data = doc.data();
-            const createdDate = data.date?.createdDate as admin.firestore.Timestamp | undefined;
-            const updatedDate = data.date?.updatedDate as admin.firestore.Timestamp | undefined;
-
-            const createdDateISO = serializeAdminTimestamp(createdDate);
-            const updatedDateISO = serializeAdminTimestamp(updatedDate);
+            const createdDateISO = serializeAdminTimestamp(data.date?.createdDate as admin.firestore.Timestamp | undefined);
+            const updatedDateISO = serializeAdminTimestamp(data.date?.updatedDate as admin.firestore.Timestamp | undefined);
 
             const serializableTree: Tree = {
                 id: doc.id,
@@ -76,26 +83,53 @@ export const load: PageServerLoad = async ({ locals }) => {
                 location: data.location,
                 userId: data.userId,
                 userName: data.userId ? (usersMap.get(data.userId) || data.userId) : 'Tidak Diketahui',
-                date: { // Simpan sebagai ISO string atau null
-                    createdDate: createdDateISO,
-                    updatedDate: updatedDateISO,
-                },
-                // Field *_formatted untuk tampilan langsung jika diperlukan
+                date: { createdDate: createdDateISO, updatedDate: updatedDateISO },
                 createdDateFormatted: formatDisplayDate(createdDateISO),
                 updatedDateFormatted: formatDisplayDate(updatedDateISO),
-                // fruitCounts tidak relevan untuk GanoAI, jadi bisa diabaikan atau pastikan tipenya opsional
             };
             treesList.push(serializableTree);
+            
+            if (data.location?.latitude != null && data.location?.longitude != null) {
+                locations.push(data.location); // Kumpulkan lokasi untuk menghitung pusat
+                treeFeaturesForMap.push({
+                    type: 'Feature',
+                    geometry: { type: 'Point', coordinates: [data.location.longitude, data.location.latitude] },
+                    properties: {
+                        id: doc.id,
+                        name: data.name || `Pohon ID ${doc.id.substring(0,6)}`,
+                        last_status: data.last_status || 'unknown',
+                        img: data.img,
+                        description: data.description
+                    }
+                });
+            }
         });
+        
+        const treeDataGeoJSON: FeatureCollection<Point, TreeGeoJSONProperties> | null = treeFeaturesForMap.length > 0
+            ? { type: 'FeatureCollection', features: treeFeaturesForMap }
+            : null;
+
+        // --- HITUNG TITIK TENGAH PETA ---
+        let mapCenter: GeoLocation = { latitude: -2.5489, longitude: 118.0149 }; // Default Indonesia
+        if (locations.length > 0) {
+            const sumLat = locations.reduce((acc, loc) => acc + loc.latitude, 0);
+            const sumLng = locations.reduce((acc, loc) => acc + loc.longitude, 0);
+            mapCenter = { latitude: sumLat / locations.length, longitude: sumLng / locations.length };
+        }
+        // ---------------------------------
 
         return {
             trees: treesList,
-            companyId: companyIdToLoad, // ganoAICompanyId
-            message: treesList.length === 0 ? 'Tidak ada data pohon untuk perusahaan ini.' : null
+            treeDataGeoJSON,
+            mapCenter, // Kirim titik tengah ke UI
+            companyId: companyIdToLoad,
+            mapboxAccessToken: import.meta.env.VITE_MAPBOX_ACCESS_TOKEN,
+            filters: { status: filterStatus, startDate: startDateStr, endDate: endDateStr },
+            message: treesList.length === 0 ? 'Tidak ada data pohon yang cocok dengan filter Anda.' : null
         };
 
     } catch (error: any) {
-        console.error(`[TreeGano Server Load] Gagal memuat pohon untuk GanoAI company ${companyIdToLoad}:`, error);
+        console.error(`[TreeGano Server Load] Gagal memuat pohon:`, error);
         throw svelteKitError(500, `Gagal memuat data pohon GanoAI: ${error.message}`);
     }
 };

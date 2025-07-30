@@ -31,6 +31,12 @@ export const ALL_MENU_ITEMS: MenuItemType[] = [
                 url: '/apps/tree-gano',
                 parentKey: 'group-ganoai', // Sesuaikan parentKey
             },
+            {
+                key: 'app-spread-potential-gano',
+                label: 'Potensi Sebaran',
+                url: '/apps/spread-potential-gano',
+                parentKey: 'group-ganoai',
+            },
         ],
     },
     {

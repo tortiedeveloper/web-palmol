@@ -1,8 +1,10 @@
 # main.py
 import firebase_admin
 from firebase_admin import credentials, firestore, auth as firebase_auth
-from firebase_functions import https_fn, options
+from firebase_functions import https_fn, options, scheduler_fn
 from datetime import datetime, timezone # Pastikan timezone diimpor
+
+from tasks import daily_report
 
 if not firebase_admin._apps:
     firebase_admin.initialize_app()
@@ -101,3 +103,19 @@ def manage_user_access_claims(req: https_fn.CallableRequest) -> https_fn.Respons
             message="Server mengalami kesalahan internal saat memproses permintaan Anda.",
             details=f"Error type: {type(e).__name__}"
         )
+    
+
+# FUNGSI BOT WHATSAPP BARU ANDA
+@scheduler_fn.on_schedule(
+    schedule="0 17 * * *", # Jam 5 sore setiap hari
+    timezone=scheduler_fn.Timezone("Asia/Jakarta"),
+    secrets=["WHATSAPP_API_TOKEN", "WHATSAPP_API_URL"] # Memberi akses ke secret
+)
+def dailyganodermareport(event: scheduler_fn.ScheduledEvent) -> None:
+    """
+    Menjalankan pengecekan harian untuk lonjakan Ganoderma dan mengirim laporan.
+    """
+    try:
+        daily_report.run_daily_check()
+    except Exception as e:
+        print(f"!!! CRITICAL ERROR dalam dailyganodermareport: {e}")

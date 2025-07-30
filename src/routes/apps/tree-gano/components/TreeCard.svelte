@@ -4,13 +4,12 @@
     import Icon from '@iconify/svelte';
 
     export let tree: Tree;
-    export let onViewPhoto: (tree: Tree) => void;
-    export let onViewTimeline: (tree: Tree) => void;
+    // PERBAIKAN: Update definisi prop untuk menerima MouseEvent dan mengizinkan Promise
+    export let onViewPhoto: (event: MouseEvent, tree: Tree) => void;
+    export let onViewTimeline: (event: MouseEvent, tree: Tree) => void | Promise<void>;
 
-    // Tambahkan ini untuk menerima class sebagai prop
     let className = '';
-    export { className as class }; // Ekspor 'className' sebagai prop 'class'
-
+    export { className as class };
 
     const defaultTreeImage = '/images/trees/default-tree.jpg';
 
@@ -31,13 +30,7 @@
 
 <Card class="h-100 d-flex flex-column {className || ''} {$$props.class || ''}">
     {#if tree.img}
-        <img 
-            src={tree.img} 
-            alt="Foto {tree.name}" 
-            class="card-img-top" 
-            style="height: 200px; object-fit: cover;"
-            on:error={handleImageError}
-        />
+        <img src={tree.img} alt="Foto {tree.name}" class="card-img-top" style="height: 200px; object-fit: cover;" on:error={handleImageError} />
     {:else}
         <div class="bg-light d-flex align-items-center justify-content-center" style="height: 200px;">
             <Icon icon="mdi:image-off-outline" style="font-size: 4rem; color: #ccc;"/>
@@ -71,11 +64,11 @@
 
         <div class="mt-auto d-flex gap-2">
             {#if tree.img}
-            <Button size="sm" color="light" outline on:click={() => onViewPhoto(tree)} class="flex-grow-1">
+            <Button size="sm" color="light" outline on:click={(event) => onViewPhoto(event, tree)} class="flex-grow-1">
                 <Icon icon="mdi:image-outline" class="me-1"/> Foto
             </Button>
             {/if}
-            <Button size="sm" color="primary" outline on:click={() => onViewTimeline(tree)} class="flex-grow-1">
+            <Button size="sm" color="primary" outline on:click={(event) => onViewTimeline(event, tree)} class="flex-grow-1">
                 <Icon icon="mdi:timeline-text-outline" class="me-1"/> Riwayat
             </Button>
         </div>
