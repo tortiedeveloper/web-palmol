@@ -4,6 +4,7 @@ import type { PageServerLoad, Actions } from './$types';
 import type { Tree, UserSessionData } from '$lib/types';
 import { ganoAIDbAdmin } from '$lib/server/adminGanoAI';
 import admin from 'firebase-admin';
+import { env } from '$env/dynamic/private';
 
 interface FinancialParameters {
 	hargaTbsPerKg: number;
@@ -12,19 +13,20 @@ interface FinancialParameters {
 	probabilitasInfeksiKritis: number;
 	kurvaPenurunanHasil: number[];
 	biayaPerPohon: number;
+	hargaBibit: number;
 }
 
 function getDistanceInMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
-    const R = 6371e3;
-    const φ1 = (lat1 * Math.PI) / 180;
-    const φ2 = (lat2 * Math.PI) / 180;
-    const Δφ = ((lat2 - lat1) * Math.PI) / 180;
-    const Δλ = ((lon2 - lon1) * Math.PI) / 180;
-    const a =
-        Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-        Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c;
+	const R = 6371e3;
+	const φ1 = (lat1 * Math.PI) / 180;
+	const φ2 = (lat2 * Math.PI) / 180;
+	const Δφ = ((lat2 - lat1) * Math.PI) / 180;
+	const Δλ = ((lon2 - lon1) * Math.PI) / 180;
+	const a =
+		Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+		Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+	const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+	return R * c;
 }
 
 function serializeAdminTimestamp(
@@ -36,18 +38,72 @@ function serializeAdminTimestamp(
 	return null;
 }
 
-
 function hitungKerugianNpvPerPohon(params: FinancialParameters): { total: number; breakdown: number[] } {
 	const breakdown: number[] = [];
 	for (let i = 0; i < params.kurvaPenurunanHasil.length; i++) {
 		const tahun = i + 1;
 		const persentaseKerugian = params.kurvaPenurunanHasil[i];
-		const kerugianRupiah = params.produksiTbsTahunanPerPohon * persentaseKerugian * params.hargaTbsPerKg;
+		const kerugianRupiah =
+			params.produksiTbsTahunanPerPohon * persentaseKerugian * params.hargaTbsPerKg;
 		const kerugianSaatIni = kerugianRupiah / Math.pow(1 + params.tingkatDiskontoTahunan, tahun);
 		breakdown.push(kerugianSaatIni);
 	}
-	const total = breakdown.reduce((sum, val) => sum + val, 0);
+	const totalKerugianPendapatan = breakdown.reduce((sum, val) => sum + val, 0);
+	const total = totalKerugianPendapatan + (params.hargaBibit || 0);
 	return { total, breakdown };
+}
+
+async function getAiAnalysis(summaryForAI: any) {
+	try {
+		const prompt = `Anda adalah seorang konsultan ahli agribisnis kelapa sawit. Berikan laporan analisis dan rekomendasi profesional berdasarkan data wabah Ganoderma berikut. Gunakan format Markdown dengan subjudul yang jelas.
+
+		Data Laporan:
+		- Jumlah Pohon Terinfeksi Saat Ini: ${summaryForAI.jumlahPohonSakit}
+		- Jumlah Pohon Sehat di Zona Kritis (risiko tinggi): ${summaryForAI.jumlahPohonZonaKritis}
+		- Total Proyeksi Kerugian Pendapatan (NPV): Rp ${summaryForAI.totalPotensiKerugian.toLocaleString('id-ID')}
+		- Total Estimasi Biaya Perawatan (Investasi): Rp ${summaryForAI.totalBiayaInvestasi.toLocaleString('id-ID')}
+		- Proyeksi Return on Investment (ROI): ${summaryForAI.proyeksiROI}%
+		- Biaya Penggantian Bibit per Pohon: Rp ${summaryForAI.hargaBibit.toLocaleString('id-ID')}
+
+		Tolong buat laporan dengan struktur berikut:
+
+		### Ringkasan Eksekutif
+		(Berikan gambaran umum situasi dalam 2-3 kalimat.)
+
+		### Analisis Risiko & Urgensi
+		(Jelaskan tingkat kegawatan berdasarkan jumlah pohon sakit dan kritis. Apa risiko terbesarnya jika tidak ditangani?)
+
+		### Analisis Finansial (ROI)
+		(Jelaskan apakah investasi perawatan ini layak secara finansial berdasarkan angka ROI. Sebutkan perbandingan antara biaya dan potensi pendapatan yang diselamatkan.)
+
+		### Rekomendasi Tindakan
+		(Berikan 2-3 poin rekomendasi tindakan yang paling prioritas untuk dilakukan oleh manajer perkebunan.)`;
+
+		const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+			method: 'POST',
+			headers: {
+				Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
+				'Content-Type': 'application/json',
+				'HTTP-Referer': env.YOUR_SITE_URL || 'http://localhost',
+				'X-Title': env.YOUR_SITE_NAME || 'GanoAI Dashboard'
+			},
+			body: JSON.stringify({
+				model: 'google/gemini-flash-1.5',
+				messages: [{ role: 'user', content: prompt }]
+			})
+		});
+
+		if (!response.ok) {
+			const errorBody = await response.text();
+			throw new Error(`OpenRouter API error: ${response.status} ${errorBody}`);
+		}
+
+		const result = await response.json();
+		return result.choices[0].message.content;
+	} catch (error: any) {
+		console.error('Gagal mengambil analisis AI:', error.message);
+		return 'Analisis AI tidak tersedia saat ini karena terjadi kesalahan koneksi.';
+	}
 }
 
 export const load: PageServerLoad = async ({ locals }) => {
@@ -60,15 +116,22 @@ export const load: PageServerLoad = async ({ locals }) => {
 		throw svelteKitError(503, 'Layanan data GanoAI tidak tersedia.');
 	}
 	try {
+		const companyRef = ganoAIDbAdmin.collection('company').doc(companyIdToLoad);
+		const companyDoc = await companyRef.get();
+		if (!companyDoc.exists) {
+			throw svelteKitError(404, `Data perusahaan tidak ditemukan.`);
+		}
+		const companyData = companyDoc.data();
+		const companyName = companyData?.company_name || 'Perusahaan Anda';
+
 		const settingsRef = ganoAIDbAdmin.collection('company_settings').doc(companyIdToLoad);
 		const settingsDoc = await settingsRef.get();
 		if (!settingsDoc.exists) {
 			throw svelteKitError(404, `Pengaturan finansial untuk perusahaan Anda tidak ditemukan.`);
 		}
 		const financialParams = settingsDoc.data() as FinancialParameters;
-		if (financialParams.biayaPerPohon === undefined) {
-			financialParams.biayaPerPohon = 0;
-		}
+		if (financialParams.biayaPerPohon === undefined) financialParams.biayaPerPohon = 0;
+		if (financialParams.hargaBibit === undefined) financialParams.hargaBibit = 0;
 
 		const treesColRef = ganoAIDbAdmin.collection(`company/${companyIdToLoad}/tree`);
 		const allTreesSnapshot = await treesColRef.get();
@@ -168,7 +231,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 			totalEstimasiBiayaPerawatan > 0
 				? (hasilBersihIntervensi / totalEstimasiBiayaPerawatan) * 100
 				: 0;
-		
+
 		const yearlyBreakdownKerugian = kerugianBreakdownPerPohon.map(
 			(yearlyLoss) =>
 				sickTrees.length * yearlyLoss +
@@ -182,11 +245,21 @@ export const load: PageServerLoad = async ({ locals }) => {
 			hasilBersihIntervensi: hasilBersihIntervensi,
 			proyeksiROI: proyeksiROI,
 			kerugianPerPohon: kerugianNpvPerPohon,
-			yearlyBreakdown: yearlyBreakdownKerugian, // DIKEMBALIKAN KE SINI
+			yearlyBreakdown: yearlyBreakdownKerugian,
 			parameter: financialParams
 		};
 
+		const summaryForAI = {
+			jumlahPohonSakit: sickTrees.length,
+			jumlahPohonZonaKritis: criticalZoneTrees.length,
+			totalPotensiKerugian: Math.round(financialImpact.totalProyeksiKerugianPendapatan),
+			totalBiayaInvestasi: Math.round(financialImpact.totalEstimasiBiayaPerawatan),
+			proyeksiROI: financialImpact.proyeksiROI.toFixed(1),
+			hargaBibit: financialParams.hargaBibit
+		};
+
 		return {
+			companyName,
 			sickTrees,
 			criticalZoneTrees,
 			warningZoneTrees,
@@ -198,7 +271,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 			},
 			mapboxAccessToken: import.meta.env.VITE_MAPBOX_ACCESS_TOKEN,
 			financialImpact,
-			message: null
+			message: null,
+			aiAnalysis: getAiAnalysis(summaryForAI)
 		};
 	} catch (error: any) {
 		console.error(`[SpreadPotential Server Load] Gagal memuat data:`, error);
@@ -230,7 +304,8 @@ export const actions: Actions = {
 					formData.get('probabilitasInfeksiKritis') as string
 				),
 				kurvaPenurunanHasil: kurvaString.split(',').map((s) => parseFloat(s.trim())),
-				biayaPerPohon: parseFloat(formData.get('biayaPerPohon') as string)
+				biayaPerPohon: parseFloat(formData.get('biayaPerPohon') as string),
+				hargaBibit: parseFloat(formData.get('hargaBibit') as string)
 			};
 
 			if (

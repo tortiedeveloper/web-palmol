@@ -1,41 +1,51 @@
 # functions/services/whatsapp_service.py
 import requests
-from .. import config # Mengimpor dari config.py di root
+import json
+from requests.auth import HTTPBasicAuth
 
-def send_message(group_id: str, message: str) -> bool:
-    """
-    Mengirim pesan teks ke grup WhatsApp melalui API provider.
-    """
-    api_url = config.WHATSAPP_API_URL.value()
-    api_token = config.WHATSAPP_API_TOKEN.value()
+import config 
 
-    if not all([api_url, api_token, group_id]):
-        print("ERROR: Konfigurasi WhatsApp API tidak lengkap.")
+def send_template_message(recipient_number: str, content_sid: str, template_variables: list):
+    """
+    Mengirim pesan WhatsApp menggunakan Template yang sudah disetujui via Twilio.
+    recipient_number bisa berupa nomor individu ('whatsapp:+62...') atau ID grup.
+    """
+    account_sid = config.TWILIO_ACCOUNT_SID.value()
+    auth_token = config.TWILIO_AUTH_TOKEN.value()
+    twilio_number = config.TWILIO_WHATSAPP_NUMBER.value()
+
+    if not all([account_sid, auth_token, twilio_number, recipient_number, content_sid]):
+        print("ERROR: Konfigurasi Twilio atau parameter tidak lengkap.")
         return False
 
-    headers = {
-        "Authorization": f"Bearer {api_token}",
-        "Content-Type": "application/json",
-    }
+    api_url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json"
     
-    # Payload bisa berbeda tergantung provider, ini contoh umum
+    # Membuat payload ContentVariables secara dinamis
+    content_vars = {}
+    for i, var in enumerate(template_variables):
+        content_vars[str(i + 1)] = str(var)
+
+    # Payload untuk mengirim Template
     payload = {
-        "messaging_product": "whatsapp",
-        "to": group_id,
-        "type": "text",
-        "text": {
-            "body": message
-        }
+        "To": recipient_number,
+        "From": twilio_number,
+        "ContentSid": content_sid,
+        "ContentVariables": json.dumps(content_vars)
     }
 
     try:
-        print(f"Mengirim pesan ke grup: {group_id}...")
-        response = requests.post(api_url, headers=headers, json=payload, timeout=10)
-        response.raise_for_status() # Akan error jika status code 4xx atau 5xx
-        print(f"Pesan berhasil dikirim. Status: {response.status_code}")
+        print(f"Mengirim template (SID: {content_sid}) ke: {recipient_number}...")
+        response = requests.post(
+            api_url,
+            data=payload,
+            auth=HTTPBasicAuth(account_sid, auth_token),
+            timeout=15
+        )
+        response.raise_for_status()
+        print(f"Template berhasil dikirim. SID Pesan: {response.json().get('sid')}")
         return True
     except requests.exceptions.RequestException as e:
-        print(f"!!! GAGAL mengirim pesan WhatsApp ke {group_id}: {e}")
+        print(f"!!! GAGAL mengirim template WhatsApp ke {recipient_number}: {e}")
         if e.response is not None:
             print(f"Response body: {e.response.text}")
         return False
