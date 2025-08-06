@@ -1,6 +1,6 @@
 // src/lib/helpers/menu.ts
 import type { MenuItemType, UserSessionData } from '$lib/types';
-import { ALL_MENU_ITEMS } from "$lib/assets/data/menu-items"; // Pastikan path ini benar
+import { ALL_MENU_ITEMS } from "$lib/assets/data/menu-items";
 
 export const getMenuItems = (userSession?: UserSessionData | null): MenuItemType[] => {
     console.log("[menu.ts] getMenuItems called with userSession:", JSON.stringify(userSession, null, 2));
@@ -22,9 +22,6 @@ export const getMenuItems = (userSession?: UserSessionData | null): MenuItemType
             console.log("[menu.ts] getMenuItems: Adding GanoAI menu group.");
             filteredMenu.push({
                 ...ganoAIMenu,
-                // Anda bisa melakukan filter pada children di sini jika perlu,
-                // contoh: children: ganoAIMenu.children?.filter(child => child.key !== 'app-contacts-ripeness') || []
-                // Untuk saat ini, kita asumsikan struktur children di ALL_MENU_ITEMS sudah benar untuk GanoAI
                 children: ganoAIMenu.children || [] 
             });
         } else {
@@ -44,7 +41,6 @@ export const getMenuItems = (userSession?: UserSessionData | null): MenuItemType
             console.warn("[menu.ts] getMenuItems: SawitHarvest menu group ('group-sawitharvest') not found in ALL_MENU_ITEMS.");
         }
 
-        // PERUBAHAN: Tambahkan grup "Palmol" jika pengguna memiliki akses Ripeness
         const palmolMenu = ALL_MENU_ITEMS.find(item => item.key === 'group-palmol');
         if (palmolMenu) {
             console.log("[menu.ts] getMenuItems: Adding Palmol menu group because user has Ripeness access.");
@@ -57,12 +53,26 @@ export const getMenuItems = (userSession?: UserSessionData | null): MenuItemType
         }
     }
     
+    // --- BLOK PERBAIKAN ---
+    // Jika pengguna memiliki akses ke setidaknya SATU modul (GanoAI atau Ripeness),
+    // maka tampilkan menu Support.
+    if (userSession.hasGanoAIAccess || userSession.hasRipenessAccess) {
+        const supportSection = ALL_MENU_ITEMS.find((item) => item.key === 'section-support');
+		if (supportSection) {
+			filteredMenu.push(supportSection);
+		}
+		const chatApp = ALL_MENU_ITEMS.find((item) => item.key === 'app-chat');
+		if (chatApp) {
+			filteredMenu.push(chatApp);
+		}
+    }
+    // --- AKHIR BLOK PERBAIKAN ---
+
     console.log("[menu.ts] getMenuItems: Returning filteredMenu:", JSON.stringify(filteredMenu, null, 2));
     return filteredMenu;
 };
 
-// --- Sisa fungsi (findAllParent, getMenuItemFromURL, findMenuItem) tetap sama seperti versi terakhir Anda yang sudah dikoreksi ---
-
+// --- Sisa fungsi (findAllParent, dll.) tidak perlu diubah ---
 export const findAllParent = (menuItems: MenuItemType[], menuItem: MenuItemType): string[] => {
     let parents: string[] = [];
     if (!menuItem || !menuItem.parentKey) {

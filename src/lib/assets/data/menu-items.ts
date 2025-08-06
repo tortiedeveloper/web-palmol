@@ -98,4 +98,16 @@ export const ALL_MENU_ITEMS: MenuItemType[] = [
             },
         ],
     },
+    {
+        key: 'section-support',
+        label: 'SUPPORT',
+        isTitle: true,
+    },
+    {
+        key: 'app-chat',
+        label: 'Chat Dengan Admin',
+        icon: 'mdi:chat-processing-outline',
+        url: '/apps/chat',
+        isTitle: false
+    }
 ];
