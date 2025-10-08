@@ -11,7 +11,6 @@
 		latitude: -6.2088,
 		zoom: 12
 	};
-	// PROPERTI BARU untuk menerima pohon yang harus di-fokus
 	export let focusedTree: Tree | null = null;
 
 	let mapInstance: mapboxgl.Map | null = null;
@@ -62,12 +61,24 @@
 		mapInstance.addLayer({ id: 'cluster-count', type: 'symbol', source: sourceId, filter: ['has', 'point_count'], layout: { 'text-field': '{point_count_abbreviated}', 'text-font': ['DIN Offc Pro Medium', 'Arial Unicode MS Bold'], 'text-size': 12 }});
 		mapInstance.addLayer({ id: 'unclustered-point', type: 'circle', source: sourceId, filter: ['!', ['has', 'point_count']], paint: { 'circle-color': [ 'match', ['get', 'last_status'], 'sick', statusColors['sick'], 'recovered', statusColors['recovered'], 'maintenance', statusColors['maintenance'], statusColors['default'] ], 'circle-radius': 6, 'circle-stroke-width': 1.5, 'circle-stroke-color': '#ffffff' }});
 		
+		// --- GANTI BLOK DI BAWAH INI ---
         mapInstance.on('click', 'unclustered-point', (e) => {
 			if (!e.features || e.features.length === 0 || !e.features[0].properties || e.features[0].geometry.type !== 'Point') return;
+			
 			const coordinates = e.features[0].geometry.coordinates.slice();
-			const props = e.features[0].properties;
-			new mapboxgl.Popup().setLngLat(coordinates as [number, number]).setHTML(`<strong>${props.name}</strong>`).addTo(mapInstance!);
+			const props = e.features[0].properties as TreeGeoJSONProperties;
+			
+			let popupHTML = `<strong>${props.name}</strong>`;
+			if (props.kawasan && props.kawasan !== 'N/A') {
+				popupHTML += `<br><small>Kawasan: ${props.kawasan}</small>`;
+			}
+
+			new mapboxgl.Popup()
+				.setLngLat(coordinates as [number, number])
+				.setHTML(popupHTML)
+				.addTo(mapInstance!);
 		});
+		// --- AKHIR PERUBAHAN ---
 
         mapInstance.on('mouseenter', ['clusters', 'unclustered-point'], () => { if(mapInstance) mapInstance.getCanvas().style.cursor = 'pointer'; });
 		mapInstance.on('mouseleave', ['clusters', 'unclustered-point'], () => { if(mapInstance) mapInstance.getCanvas().style.cursor = ''; });
@@ -82,15 +93,13 @@
 		}
 	});
 
-    // BLOK REAKTIF BARU: Ini akan otomatis berjalan saat `focusedTree` berubah
     $: if (mapInstance && focusedTree && focusedTree.location) {
         mapInstance.flyTo({
             center: [focusedTree.location.longitude, focusedTree.location.latitude],
-            zoom: 18, // Zoom lebih dekat
+            zoom: 18,
             essential: true
         });
     }
-
 </script>
 
 <div bind:this={mapContainer} style="width: 100%; height: 100%;"></div>

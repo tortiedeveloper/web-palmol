@@ -114,6 +114,11 @@
             popupContentContainer.style.fontSize = '0.85rem';
 
             let baseHTML = `<strong>${rawProperties.name || 'Detail Pohon'}</strong>`;
+    
+            // Tambahkan info kawasan jika ada
+            if (rawProperties.kawasan && rawProperties.kawasan !== 'N/A') {
+                baseHTML += `<br><small class="text-muted">Kawasan: ${rawProperties.kawasan}</small>`;
+            }
             
             let fc: FruitCounts | undefined | null = undefined;
             if (typeof rawProperties.fruitCounts === 'string') {

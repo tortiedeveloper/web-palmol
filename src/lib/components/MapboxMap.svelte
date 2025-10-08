@@ -117,7 +117,18 @@
             popupContentContainer.style.maxWidth = '250px';
             popupContentContainer.style.fontSize = '0.85rem';
 
-            let innerHTML = `<strong>${properties.name || 'Detail Pohon'}</strong><br>Status: ${getDisplayStatus(properties.last_status)}`;
+            // --- PERUBAHAN DIMULAI DI SINI ---
+            let innerHTML = `<strong>${properties.name || 'Detail Pohon'}</strong>`;
+
+            // Tambahkan baris untuk menampilkan Kawasan jika ada
+            if (properties.kawasan && properties.kawasan !== 'N/A') {
+                innerHTML += `<br><small class="text-muted">Kawasan: ${properties.kawasan}</small>`;
+            }
+            
+            // Tambahkan baris untuk Status
+            innerHTML += `<br>Status: ${getDisplayStatus(properties.last_status)}`;
+            // --- AKHIR PERUBAHAN ---
+
             if (properties.description) {
                 innerHTML += `<br><small>Deskripsi: ${properties.description.substring(0,100)}${properties.description.length > 100 ? '...' : ''}</small>`;
             }

@@ -36,6 +36,7 @@ interface HarvestReadyTree {
     updatedDate: string;
     reportedBy?: string;
     img?: string;
+    kawasan?: string;
 }
 
 function formatDisplayDateForServer(dateInput: admin.firestore.Timestamp | Date | string | undefined | null): string {
@@ -149,7 +150,8 @@ export const load: PageServerLoad = async ({ locals, url }): Promise<AnalyticsRi
                     properties: {
                         id: treeId, name: rawTreeData.name || `Pohon ${treeId.substring(0,6)}`,
                         img: rawTreeData.img, description: rawTreeData.description,
-                        fruitCounts: fc
+                        fruitCounts: fc,
+                        kawasan: rawTreeData.kawasan || 'N/A' // <-- TAMBAHKAN BARIS INI
                     }
                 });
             }
@@ -168,6 +170,7 @@ export const load: PageServerLoad = async ({ locals, url }): Promise<AnalyticsRi
                     fruitCounts: fc, updatedDate: formatDisplayDateForServer(updatedDateFirestore),
                     reportedBy: rawTreeData.userId ? (usersMap.get(rawTreeData.userId) || rawTreeData.userId) : 'N/A',
                     img: rawTreeData.img,
+                    kawasan: rawTreeData.kawasan || 'N/A' // <-- TAMBAHKAN BARIS INI
                 });
             }
         });

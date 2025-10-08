@@ -258,8 +258,8 @@
 		<Row class="mt-2">
 			{#if statistics.length > 0}
 				{#each statistics as item, i (item.title)}
-					<Col md="6" xl="3" class="mb-3 d-flex">
-						{#if i === 0 && item.statistic === ''}
+					<Col md="6" xl="4" class="mb-3 d-flex">
+					{#if i === 0 && item.statistic === ''}
 							<Card class="bg-primary text-white w-100 shadow-sm">
 								<CardBody class="d-flex align-items-center justify-content-center">
 									<h4 class="card-title text-white mb-0 text-center" style="font-size: 1.1rem;">

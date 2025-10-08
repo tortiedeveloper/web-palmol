@@ -38,6 +38,7 @@ export interface Company {
     consultationId?: string; // Spesifik GanoAI? Jadikan opsional
     isCompany?: boolean;
     onRequest?: boolean;     // Spesifik GanoAI? Jadikan opsional
+    daftarKawasan?: string[];
 }
 
 export interface TreeDate { // Tetap menggunakan string karena sudah diserialisasi dari server
@@ -64,6 +65,7 @@ export interface Tree extends FormattedDates { // Gabungkan FormattedDates
     userId?: string;
     userName?: string;
     fruitCounts?: FruitCounts; // Opsional, untuk Ripeness
+    kawasan?: String;
 }
 
 export interface UserDateInfo {
@@ -113,6 +115,7 @@ export interface TreeGeoJSONProperties {
     fruitCounts?: FruitCounts; // Untuk Ripeness, ditampilkan di popup
     img?: string;
     description?: string;
+    kawasan?: string;
 }
 
 // Tipe untuk Riwayat/Record Pohon
@@ -193,6 +196,7 @@ export interface ProblemTree { // Untuk GanoAI
     reportedBy?: string;
     img?: string;
     description?: string;
+    kawasan?: string;
 }
 
 export interface HarvestReadyTree { // Untuk Ripeness

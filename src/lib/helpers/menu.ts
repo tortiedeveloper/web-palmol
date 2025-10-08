@@ -53,14 +53,19 @@ export const getMenuItems = (userSession?: UserSessionData | null): MenuItemType
         }
     }
     
-    // --- BLOK PERBAIKAN ---
-    // Jika pengguna memiliki akses ke setidaknya SATU modul (GanoAI atau Ripeness),
-    // maka tampilkan menu Support.
     if (userSession.hasGanoAIAccess || userSession.hasRipenessAccess) {
+        // TAMBAHKAN BLOK 'if' DI BAWAH INI
+        const kawasanMenu = ALL_MENU_ITEMS.find((item) => item.key === 'app-kawasan');
+        if (kawasanMenu) {
+            filteredMenu.push(kawasanMenu);
+        }
+        // AKHIR BLOK TAMBAHAN
+
         const supportSection = ALL_MENU_ITEMS.find((item) => item.key === 'section-support');
 		if (supportSection) {
 			filteredMenu.push(supportSection);
 		}
+
 		const chatApp = ALL_MENU_ITEMS.find((item) => item.key === 'app-chat');
 		if (chatApp) {
 			filteredMenu.push(chatApp);

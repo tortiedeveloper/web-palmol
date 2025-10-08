@@ -151,7 +151,7 @@
                                 <thead class="table-light">
                                     <tr>
                                         <th>Nama Pohon</th>
-                                        <th class="text-center">Matang</th>
+                                        <th>Kawasan</th> <th class="text-center">Matang</th>
                                         <th class="text-center">Belum Matang</th>
                                         <th class="text-center">Terlalu Matang</th>
                                         <th>Update Terakhir</th>
@@ -161,11 +161,8 @@
                                 <tbody>
                                     {#each harvestReadyTrees as tree (tree.id)}
                                         <tr>
-                                            <td>
-                                                {tree.name}
-                                                
-                                            </td>
-                                            <td class="text-center fw-bold text-success">{tree.fruitCounts.matang}</td>
+                                            <td>{tree.name}</td>
+                                            <td class="text-muted">{tree.kawasan || '-'}</td> <td class="text-center fw-bold text-success">{tree.fruitCounts.matang}</td>
                                             <td class="text-center">{tree.fruitCounts.belumMatang}</td>
                                             <td class="text-center text-danger">{tree.fruitCounts.terlaluMatang}</td>
                                             <td>{tree.updatedDate}</td>

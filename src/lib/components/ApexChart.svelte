@@ -15,18 +15,38 @@
 
 	// onMount HANYA berjalan di sisi browser, setelah server render selesai
 	onMount(async () => {
-		// Impor library secara dinamis HANYA di browser
 		const ApexCharts = (await import('apexcharts')).default;
 
-		// Buat instance chart sekarang karena kita sudah pasti di browser
-		chart = new ApexCharts(chartElement, options);
-		chart.render();
+		// Fungsi untuk menginisialisasi chart
+		const initChart = () => {
+			// Hancurkan chart lama jika ada untuk mencegah memory leak
+			if (chart) {
+				chart.destroy();
+				chart = null;
+			}
+			
+			// Buat instance chart baru
+			chart = new ApexCharts(chartElement, options);
+			chart.render();
+		};
+
+		// Fungsi untuk memeriksa apakah kontainer sudah siap
+		const checkAndRender = () => {
+			// Cek apakah lebar kontainer sudah lebih dari 0
+			if (chartElement && chartElement.clientWidth > 0) {
+				initChart();
+			} else {
+				// Jika belum, tunggu sejenak dan coba lagi.
+				// Ini memberi waktu pada browser untuk menyelesaikan kalkulasi layout.
+				setTimeout(checkAndRender, 50); 
+			}
+		};
+		
+		// Mulai proses pengecekan
+		checkAndRender();
 	});
 
-	// Blok reaktif ini tetap ada dan akan berfungsi dengan baik.
-	// Ia tidak akan berjalan di server karena 'chart' awalnya adalah null.
-	// Ia baru akan aktif di sisi klien setelah onMount selesai.
-	$: if (chart && options) {
+	$: if (chart && options && chartElement.clientWidth > 0) {
 		chart.updateOptions(options);
 	}
 </script>

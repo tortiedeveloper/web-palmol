@@ -23,7 +23,7 @@
             <thead class="bg-light bg-opacity-50">
                 <tr>
                     <th class="text-muted py-2">Nama Pohon</th>
-                    <th class="text-muted py-2">Status</th>
+                    <th class="text-muted py-2">Kawasan</th> <th class="text-muted py-2">Status</th>
                     <th class="text-muted py-2">Tgl Update</th>
                     <th class="text-muted py-2">Pelapor</th>
                     <th class="text-muted py-2">Foto</th>
@@ -33,12 +33,12 @@
                 {#each trees as item (item.id)}
                     <tr>
                         <td>
-                            <a href={`/monitoring/trees/${item.id}`} class="text-dark fw-medium">{item.name}</a>
+                            <a href={`/apps/tree-gano/${item.id}`} class="text-dark fw-medium">{item.name}</a>
                             {#if item.description}
                                 <small class="d-block text-muted text-truncate" style="max-width: 200px;">{item.description}</small>
                             {/if}
                         </td>
-                        <td>
+                        <td class="text-muted">{item.kawasan || '-'}</td> <td>
                             {#if item.last_status === 'sick'}
                                 <Badge color="danger" class="rounded-pill px-2 py-1">Sakit</Badge> 
                             {:else if item.last_status === 'healthy'}

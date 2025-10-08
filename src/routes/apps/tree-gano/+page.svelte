@@ -25,7 +25,9 @@
 	let uiFilterStatus: string | undefined | null;
 	let uiFilterStartDate: string | undefined | null;
 	let uiFilterEndDate: string | undefined | null;
+	let uiFilterKawasan: string | undefined | null; // State baru untuk filter kawasan
 	let allTrees: Tree[] = [];
+	let daftarKawasan: string[] = []; // State baru untuk list opsi filter
 	let serverMessage: string | null | undefined;
 	let searchTerm = "";
 	let viewMode: 'card' | 'table' = 'card';
@@ -42,6 +44,8 @@
 		uiFilterStatus = currentPageData.filters?.status;
 		uiFilterStartDate = currentPageData.filters?.startDate;
 		uiFilterEndDate = currentPageData.filters?.endDate;
+		uiFilterKawasan = currentPageData.filters?.kawasan; // Inisialisasi filter kawasan
+		daftarKawasan = currentPageData.daftarKawasan || []; // Inisialisasi daftar kawasan
 	}
 
 	initializeState(data);
@@ -60,18 +64,18 @@
 		if (uiFilterStatus) params.set('status', uiFilterStatus);
 		if (uiFilterStartDate) params.set('startDate', uiFilterStartDate);
 		if (uiFilterEndDate) params.set('endDate', uiFilterEndDate);
+		if (uiFilterKawasan) params.set('kawasan', uiFilterKawasan); // Tambahkan parameter kawasan ke URL
 		goto(`?${params.toString()}`, { keepFocus: true, invalidateAll: true });
 	}
 
 	function clearFilters() {
 		goto('/apps/tree-gano', { keepFocus: true, invalidateAll: true });
 	}
-    
-    function zoomToTree(tree: Tree) {
-        treeToFocus = tree;
-		// Scroll ke atas halaman agar peta terlihat
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-    }
+    
+    function zoomToTree(tree: Tree) {
+        treeToFocus = tree;
+		window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
 	
 	function openPhotoModal(event: MouseEvent, tree: Tree) {
 		event.stopPropagation();
@@ -130,11 +134,10 @@
 	}
 
 	function toggleTimelineModal() { isTimelineModalOpen = !isTimelineModalOpen; if (!isTimelineModalOpen) { selectedTreeForTimeline = null; timelineDataForModal = []; timelineError = null; } }
-	
-    function handleTreeImageError(event: Event) { const target = event.target as HTMLImageElement; target.src = defaultTreeImage; }
+	function handleTreeImageError(event: Event) { const target = event.target as HTMLImageElement; target.src = defaultTreeImage; }
 </script>
 
-<DefaultLayout data={layoutPageData}>
+<DefaultLayout {data}>
 	<PageBreadcrumb title="Data Pohon GanoAI" subTitle="Aplikasi GanoAI" />
 
     <div class="page-container">
@@ -145,10 +148,51 @@
         <Card class="mb-4">
             <CardBody>
                 <Row class="g-3 align-items-end">
-                    <Col md="3"><FormGroup class="mb-0"><Label for="status-filter" class="form-label-sm">Filter Status:</Label><Input type="select" id="status-filter" bsSize="sm" bind:value={uiFilterStatus}><option value={undefined}>Semua Status</option><option value="sick">Sakit</option><option value="recovered">Pulih</option><option value="maintenance">Perawatan</option></Input></FormGroup></Col>
-                    <Col md="3"><FormGroup class="mb-0"><Label for="start-date-filter" class="form-label-sm">Dari Tanggal:</Label><FlatPicker id="start-date-filter" placeholder="Pilih..." options={{ dateFormat: 'Y-m-d', altInput: true, altFormat: 'd M Y' }} value={uiFilterStartDate ?? undefined} on:change={(e) => uiFilterStartDate = e.detail} class="form-control-sm"/></FormGroup></Col>
-                    <Col md="3"><FormGroup class="mb-0"><Label for="end-date-filter" class="form-label-sm">Sampai Tanggal:</Label><FlatPicker id="end-date-filter" placeholder="Pilih..." options={{ dateFormat: 'Y-m-d', altInput: true, altFormat: 'd M Y', minDate: uiFilterStartDate }} value={uiFilterEndDate ?? undefined} on:change={(e) => uiFilterEndDate = e.detail} class="form-control-sm"/></FormGroup></Col>
-                    <Col md="3"><FormGroup class="mb-0"><Label class="form-label-sm" style="visibility: hidden;">Aksi</Label><div class="d-flex gap-2"><Button color="primary" size="sm" class="w-100" on:click={applyFilters}><Icon icon="mdi:magnify"/> Terapkan</Button>{#if data.filters?.status || data.filters?.startDate || data.filters?.endDate}<Button color="outline-secondary" size="sm" class="w-100" on:click={clearFilters}><Icon icon="mdi:filter-remove-outline"/> Hapus</Button>{/if}</div></FormGroup></Col>
+                    <Col xl="3" md="6">
+						<FormGroup class="mb-0">
+							<Label for="kawasan-filter" class="form-label-sm">Filter Kawasan:</Label>
+							<Input type="select" id="kawasan-filter" bsSize="sm" bind:value={uiFilterKawasan}>
+								<option value={undefined}>Semua Kawasan</option>
+								{#each daftarKawasan as kawasan (kawasan)}
+									<option value={kawasan}>{kawasan}</option>
+								{/each}
+							</Input>
+						</FormGroup>
+					</Col>
+					<Col xl="2" md="6">
+						<FormGroup class="mb-0">
+							<Label for="status-filter" class="form-label-sm">Filter Status:</Label>
+							<Input type="select" id="status-filter" bsSize="sm" bind:value={uiFilterStatus}>
+								<option value={undefined}>Semua Status</option>
+								<option value="sick">Sakit</option>
+								<option value="recovered">Pulih</option>
+								<option value="maintenance">Perawatan</option>
+							</Input>
+						</FormGroup>
+					</Col>
+                    <Col xl="2" md="6">
+						<FormGroup class="mb-0">
+							<Label for="start-date-filter" class="form-label-sm">Dari Tanggal:</Label>
+							<FlatPicker id="start-date-filter" placeholder="Pilih..." options={{ dateFormat: 'Y-m-d', altInput: true, altFormat: 'd M Y' }} value={uiFilterStartDate ?? undefined} on:change={(e) => uiFilterStartDate = e.detail} class="form-control-sm"/>
+						</FormGroup>
+					</Col>
+                    <Col xl="2" md="6">
+						<FormGroup class="mb-0">
+							<Label for="end-date-filter" class="form-label-sm">Sampai Tanggal:</Label>
+							<FlatPicker id="end-date-filter" placeholder="Pilih..." options={{ dateFormat: 'Y-m-d', altInput: true, altFormat: 'd M Y', minDate: uiFilterStartDate }} value={uiFilterEndDate ?? undefined} on:change={(e) => uiFilterEndDate = e.detail} class="form-control-sm"/>
+						</FormGroup>
+					</Col>
+                    <Col xl="3" md="12">
+						<FormGroup class="mb-0">
+							<Label class="form-label-sm" style="visibility: hidden;">Aksi</Label>
+							<div class="d-flex gap-2">
+								<Button color="primary" size="sm" class="w-100" on:click={applyFilters}><Icon icon="mdi:magnify"/> Terapkan</Button>
+								{#if data.filters?.status || data.filters?.startDate || data.filters?.endDate || data.filters?.kawasan}
+									<Button color="outline-secondary" size="sm" class="w-100" on:click={clearFilters}><Icon icon="mdi:filter-remove-outline"/> Hapus</Button>
+								{/if}
+							</div>
+						</FormGroup>
+					</Col>
                 </Row>
             </CardBody>
         </Card>
@@ -242,22 +286,22 @@
 								<div class="table-responsive" style="max-height: 60vh; overflow-y: auto;">
 									<Table hover class="table-sm align-middle">
 										<thead class="table-light" style="position: sticky; top: 0;">
-											<tr><th>Nama Pohon</th><th>Status</th><th class="text-center">Aksi</th></tr>
+											<tr><th>Nama Pohon</th><th>Kawasan</th><th>Status</th><th class="text-center">Aksi</th></tr>
 										</thead>
 										<tbody>
 											{#each filteredTrees as tree (tree.id)}
 												{@const statusInfo = getStatusDisplay(tree.last_status)}
 												<tr style="cursor: pointer;" on:click={() => zoomToTree(tree)}>
-													<td
-														><div>{tree.name || '-'}</div><small
-															class="text-muted font-monospace">{tree.id?.substring(0, 8)}</small
-														></td
-													>
-													<td
-														><Badge color={statusInfo.color} pill class="px-2 py-1"
-															><Icon icon={statusInfo.icon} class="me-1" />{statusInfo.badgeText}</Badge
-														></td
-													>
+													<td>
+														<div>{tree.name || '-'}</div>
+														<small class="text-muted font-monospace">{tree.id?.substring(0, 8)}</small>
+													</td>
+													<td class="text-muted">{tree.kawasan || '-'}</td>
+													<td>
+														<Badge color={statusInfo.color} pill class="px-2 py-1">
+															<Icon icon={statusInfo.icon} class="me-1" />{statusInfo.badgeText}
+														</Badge>
+													</td>
 													<td class="text-center">
 														<ButtonGroup size="sm">
 															{#if tree.img}<Button

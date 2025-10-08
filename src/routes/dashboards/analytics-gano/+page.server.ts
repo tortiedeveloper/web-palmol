@@ -28,6 +28,7 @@ interface ProblemTree {
 	reportedBy?: string;
 	img?: string;
 	description?: string;
+	kawasan?: string;
 }
 
 // Definisikan tipe data spesifik untuk halaman ini yang akan dikembalikan oleh load function
@@ -45,6 +46,7 @@ interface AnalyticsGanoPageData {
 	sickTreesCountForWarning: number;
 	maxGanodermaTreeLimitForWarning: number;
 	timeframe: 'daily' | 'monthly'; // Tambahkan timeframe
+	mostAffectedKawasan: { name: string; count: number } | null;
 }
 
 function formatDisplayDateForServer(
@@ -135,6 +137,7 @@ export const load: PageServerLoad = async ({ locals, url }): Promise<AnalyticsGa
 		let calculatedInitialMapCenter = { latitude: -2.5489, longitude: 118.0149, zoom: 5 };
 		let foundTreeForCenter = false;
 		const problemTreesList: ProblemTree[] = [];
+		const kawasanSickCount = new Map<string, number>();
 
 		const statusChangesAgg: Record<string, { sick: number; recovered: number; maintenance: number }> =
 			{};
@@ -145,7 +148,13 @@ export const load: PageServerLoad = async ({ locals, url }): Promise<AnalyticsGa
 			const rawTreeData = treeDoc.data();
 			if (!rawTreeData) return;
 
-			if (rawTreeData.last_status === 'sick') kpiSickTrees++;
+			if (rawTreeData.last_status === 'sick') {
+				kpiSickTrees++;
+				if (rawTreeData.kawasan && typeof rawTreeData.kawasan === 'string') {
+					const currentCount = kawasanSickCount.get(rawTreeData.kawasan) || 0;
+					kawasanSickCount.set(rawTreeData.kawasan, currentCount + 1);
+				}
+			}
 			const currentStatus = rawTreeData.last_status?.toLowerCase();
 			if (currentStatus === 'sick') chartSickCount++;
 			else if (currentStatus === 'recovered') chartRecoveredCount++;
@@ -172,7 +181,8 @@ export const load: PageServerLoad = async ({ locals, url }): Promise<AnalyticsGa
 						name: rawTreeData.name || `Pohon ID ${treeDoc.id.substring(0, 6)}`,
 						last_status: rawTreeData.last_status || 'unknown',
 						img: rawTreeData.img,
-						description: rawTreeData.description
+						description: rawTreeData.description,
+						kawasan: rawTreeData.kawasan || 'N/A'
 					}
 				});
 			}
@@ -206,10 +216,17 @@ export const load: PageServerLoad = async ({ locals, url }): Promise<AnalyticsGa
 					img: rawTreeData.img,
 					description:
 						rawTreeData.description?.substring(0, 50) +
-						(rawTreeData.description && rawTreeData.description.length > 50 ? '...' : '')
+						(rawTreeData.description && rawTreeData.description.length > 50 ? '...' : ''),
+					kawasan: rawTreeData.kawasan || 'N/A'
 				});
 			}
 		});
+
+		let mostAffectedKawasan: { name: string; count: number } | null = null;
+		if (kawasanSickCount.size > 0) {
+			const sortedKawasan = [...kawasanSickCount.entries()].sort((a, b) => b[1] - a[1]);
+			mostAffectedKawasan = { name: sortedKawasan[0][0], count: sortedKawasan[0][1] };
+		}
 
 		const treeDataGeoJSON: FeatureCollection<Point, TreeGeoJSONProperties> | null =
 			treeFeatures.length > 0 ? { type: 'FeatureCollection', features: treeFeatures } : null;
@@ -233,14 +250,33 @@ export const load: PageServerLoad = async ({ locals, url }): Promise<AnalyticsGa
 				variant: 'danger',
 				title: 'Pohon Sakit (Ganoderma)',
 				statistic: kpiSickTrees
-			},
-			{
-				icon: 'mdi:chart-pie',
-				variant: 'warning',
-				title: 'Persentase Sakit',
-				statistic: `${percentageSickForKPI}%`
 			}
 		];
+
+		if (mostAffectedKawasan) {
+			statisticsData.push({
+				icon: 'mdi:map-marker-alert-outline',
+				variant: 'info',
+				title: 'Kawasan Terparah',
+				statistic: mostAffectedKawasan.name,
+				suffix: ` (${mostAffectedKawasan.count} pohon)`
+			});
+		}
+
+		statisticsData.push({
+			icon: 'mdi:tools',
+			variant: 'secondary',
+			title: 'Dalam Perawatan',
+			statistic: chartMaintenanceCount
+		});
+
+		statisticsData.push({
+			icon: 'mdi:chart-pie',
+			variant: 'warning',
+			title: 'Persentase Sakit',
+			statistic: `${percentageSickForKPI}%`
+		});
+
 		const treeStatusCompositionDataSeries = [
 			chartRecoveredCount,
 			chartSickCount,
@@ -315,7 +351,8 @@ export const load: PageServerLoad = async ({ locals, url }): Promise<AnalyticsGa
 			showGanodermaWarning: calculatedShowGanodermaWarning,
 			sickTreesCountForWarning: kpiSickTrees,
 			maxGanodermaTreeLimitForWarning: maxGanodermaTreeLimit,
-			timeframe: timeframe
+			timeframe: timeframe,
+			mostAffectedKawasan: mostAffectedKawasan
 		};
 	} catch (error: any) {
 		const errorMessage = `Gagal memuat data analitik GanoAI: ${error.message || 'Kesalahan tidak diketahui'}`;

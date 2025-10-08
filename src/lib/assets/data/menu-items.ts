@@ -99,6 +99,13 @@ export const ALL_MENU_ITEMS: MenuItemType[] = [
         ],
     },
     {
+        key: 'app-kawasan',
+        label: 'Manajemen Kawasan',
+        icon: 'mdi:map-marker-multiple-outline',
+        url: '/apps/kawasan',
+        isTitle: false
+    },
+    {
         key: 'section-support',
         label: 'SUPPORT',
         isTitle: true,
