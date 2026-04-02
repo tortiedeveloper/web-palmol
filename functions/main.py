@@ -1,21 +1,172 @@
 # main.py
+import os
+import smtplib
 import firebase_admin
 import json as py_json
-from firebase_admin import credentials, firestore, auth as firebase_auth
-from firebase_functions import https_fn, options
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from firebase_admin import credentials, firestore, auth as firebase_auth, get_app
+from firebase_functions import https_fn, scheduler_fn, options
 from datetime import datetime, timezone
 
-# Inisialisasi hanya jika belum ada
+# Inisialisasi hanya jika belum ada (Ini untuk database utama / Sawit Pintar)
 if not firebase_admin._apps:
     firebase_admin.initialize_app()
 
 # Atur region secara global
 options.set_global_options(region=options.SupportedRegion.ASIA_SOUTHEAST2)
 
+# ==========================================
+# FUNGSI HELPER & INISIALISASI DATABASE KEDUA
+# ==========================================
+def get_ganoai_db():
+    app_name = 'ganoAIAdmin'
+    try:
+        gano_app = get_app(app_name)
+    except ValueError:
+        sa_string = os.environ.get('GANOAI_ADMIN_SDK_JSON')
+        if not sa_string:
+            print("ERROR: GANOAI_ADMIN_SDK_JSON tidak ditemukan di environment variables.")
+            return None
+        
+        sa_dict = py_json.loads(sa_string)
+        if 'private_key' in sa_dict:
+            sa_dict['private_key'] = sa_dict['private_key'].replace('\\n', '\n')
+            
+        cred = credentials.Certificate(sa_dict)
+        
+        # --- PERBAIKAN DI SINI ---
+        # Kita paksa Python untuk menggunakan project_id dari JSON
+        # agar tidak nyasar ke database sawitpintar
+        project_id = sa_dict.get('project_id')
+        
+        gano_app = firebase_admin.initialize_app(
+            cred, 
+            options={'projectId': project_id}, # KUNCI PERBAIKANNYA
+            name=app_name
+        )
+        print(f"[{app_name}] Firebase Admin SDK diinisialisasi untuk project: {project_id}")
+        
+    return firestore.client(app=gano_app)
 
+def send_alert_email(target_email, company_name, sick_trees_data, summary_data):
+    sender_email = os.environ.get('SENDER_EMAIL')
+    sender_password = os.environ.get('SENDER_PASSWORD')
+    
+    if not sender_email or not sender_password:
+        print("ERROR: Kredensial email (SENDER_EMAIL / SENDER_PASSWORD) tidak diset di Environment Variables.")
+        return
+
+    # Susun isi pesan sesuai format yang diminta
+    body = f"Halo Tim {company_name}, sistem GanoAI mendeteksi lonjakan kasus pohon terindikasi Ganoderma.\n\n"
+    body += f"Total Pohon Sakit Baru saat Ini: {len(sick_trees_data)}\n\n"
+    body += "Berikut daftarnya:\n\n"
+    
+    for i, tree in enumerate(sick_trees_data):
+        body += f"- Pohon {tree.get('name', f'Tidak Bernama ({i+1})')}\n"
+        body += f"  Deskripsi: {tree.get('description', 'Tidak ada deskripsi')}\n"
+        body += f"  Kawasan: {tree.get('kawasan', 'Tidak ada kawasan')}\n"
+        
+        img_url = tree.get('img')
+        if img_url:
+            body += f"  (Lihat Foto: {img_url})\n"
+        
+        body += "  Mohon segera lakukan verifikasi.\n\n"
+        
+    body += "---\n"
+    body += "Rangkuman Kesehatan Kebun:\n"
+    body += f"Total Sakit: {summary_data['sick']} pohon\n"
+    body += f"Dalam Perawatan: {summary_data['maintenance']} pohon\n"
+    body += f"Sehat/Pulih: {summary_data['recovered']} pohon\n"
+
+    # Setup MIME
+    msg = MIMEMultipart()
+    msg['From'] = sender_email
+    msg['To'] = target_email
+    msg['Subject'] = "PERINGATAN LONJAKAN GANODERMA"
+    msg.attach(MIMEText(body, 'plain'))
+
+    # Kirim via SMTP Gmail
+    try:
+        server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
+        server.login(sender_email, sender_password)
+        server.sendmail(sender_email, target_email, msg.as_string())
+        server.quit()
+        print(f"Email peringatan berhasil dikirim ke {target_email} ({company_name})")
+    except Exception as e:
+        print(f"Gagal mengirim email ke {target_email}: {e}")
+
+# ==========================================
+# 1. SCHEDULER: DAILY GANODERMA ALERT
+# ==========================================
+@scheduler_fn.on_schedule(
+    schedule="0 17 * * *", 
+    timezone=scheduler_fn.Timezone("Asia/Jakarta"),
+    timeout_sec=300,
+    # TAMBAHKAN BARIS DI BAWAH INI:
+    secrets=["GANOAI_ADMIN_SDK_JSON", "SENDER_EMAIL", "SENDER_PASSWORD"] 
+)
+def daily_ganoderma_alert(event: scheduler_fn.ScheduledEvent) -> None:
+    print("Memulai proses pengecekan harian Ganoderma (17:00 WIB)...")
+    
+    db_main = firestore.client() # Database Sawit Pintar
+    db_gano = get_ganoai_db()    # Database Sawit Care
+    
+    if not db_gano:
+        print("Membatalkan eksekusi karena gagal terhubung ke database GanoAI.")
+        return
+
+    # Ambil semua dokumen user
+    users_ref = db_main.collection('companyUser')
+    users_docs = users_ref.stream()
+
+    for user_doc in users_docs:
+        user_data = user_doc.to_dict()
+        company_name = user_data.get('companyName')
+        target_email = user_data.get('email')
+        gano_company_id = user_data.get('ganoAICompanyId')
+
+        # Lewati jika data tidak lengkap
+        if not company_name or not target_email or not gano_company_id:
+            continue
+            
+        print(f"Mengecek kebun untuk {company_name}...")
+
+        # Ambil data pohon dari database GanoAI
+        trees_ref = db_gano.collection(f'company/{gano_company_id}/tree')
+        trees_docs = trees_ref.stream()
+        
+        sick_trees_data = []
+        summary_data = {'sick': 0, 'maintenance': 0, 'recovered': 0, 'other': 0}
+        
+        for tree_doc in trees_docs:
+            tree_data = tree_doc.to_dict()
+            status = tree_data.get('last_status', 'unknown').lower()
+            
+            if status == 'sick':
+                summary_data['sick'] += 1
+                sick_trees_data.append(tree_data)
+            elif status == 'maintenance':
+                summary_data['maintenance'] += 1
+            elif status == 'recovered':
+                summary_data['recovered'] += 1
+            else:
+                summary_data['other'] += 1
+
+        # Kondisi: Kirim email jika pohon sakit lebih dari 5
+        if len(sick_trees_data) > 5:
+            print(f"Mendeteksi {len(sick_trees_data)} pohon sakit di {company_name}. Mengirim email...")
+            send_alert_email(target_email, company_name, sick_trees_data, summary_data)
+        else:
+            print(f"Aman. Hanya ada {len(sick_trees_data)} pohon sakit di {company_name}.")
+            
+    print("Proses pengecekan harian selesai.")
+
+# ==========================================
+# 2. HTTP CALLABLE: MANAGE USER ACCESS CLAIMS
+# ==========================================
 @https_fn.on_call(
     cors=options.CorsOptions(
-        # BARU: Tambahkan URL Vercel Anda ke daftar ini
         cors_origins=[
             "http://localhost:5174", 
             "https://sawitpintar.firebaseapp.com",

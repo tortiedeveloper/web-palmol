@@ -15,9 +15,7 @@ import dayjs from 'dayjs';
 import 'dayjs/locale/id';
 dayjs.locale('id');
 
-const MAPBOX_ACCESS_TOKEN_SERVER =
-	import.meta.env.VITE_MAPBOX_ACCESS_TOKEN ||
-	'pk.eyJ1IjoidG9ydGlla3JlYXRpZiIsImEiOiJjbTc3bWlpY24weGYyMmpwamxzYnMyYzg2In0.vkOZJGRpZusCylE9PVVmOQ';
+const MAPBOX_ACCESS_TOKEN_SERVER = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
 const MAX_GANODERMA_TREE_STRING = import.meta.env.VITE_MAX_GANODERMA_TREE;
 
 interface ProblemTree {
@@ -335,8 +333,8 @@ export const load: PageServerLoad = async ({ locals, url }): Promise<AnalyticsGa
 			]
 		};
 
-		const isPremiumUser = userSession?.isGanoAIPremium === true;
-		const calculatedShowGanodermaWarning = isPremiumUser && kpiSickTrees > maxGanodermaTreeLimit;
+		// Cukup cek apakah jumlah pohon sakit melebihi limit yang ditentukan
+		const calculatedShowGanodermaWarning = kpiSickTrees > maxGanodermaTreeLimit;
 
 		return {
 			mapboxAccessToken: MAPBOX_ACCESS_TOKEN_SERVER,

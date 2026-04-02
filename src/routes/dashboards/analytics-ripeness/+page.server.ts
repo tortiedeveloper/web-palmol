@@ -11,7 +11,7 @@ import dayjs from 'dayjs';
 import 'dayjs/locale/id';
 dayjs.locale('id');
 
-const MAPBOX_ACCESS_TOKEN_SERVER = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN || 'pk.eyJ1IjoidG9ydGlla3JlYXRpZiIsImEiOiJjbTc3bWlpY24weGYyMmpwamxzYnMyYzg2In0.vkOZJGRpZusCylE9PVVmOQ';
+const MAPBOX_ACCESS_TOKEN_SERVER = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
 
 // Definisikan tipe data spesifik untuk halaman ini yang akan dikembalikan oleh load function
 interface AnalyticsRipenessPageData {
