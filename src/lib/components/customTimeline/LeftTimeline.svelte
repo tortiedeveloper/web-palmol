@@ -78,6 +78,19 @@
                                         <p class="text-muted mb-1" style="font-size: 0.85rem;">
                                             {event.description}
                                         </p>
+                                        
+                                        {#if event.treatment}
+                                            <div class="mt-2 mb-2 p-2 bg-info bg-opacity-10 border border-info border-opacity-25 rounded-2" style="font-size: 0.8rem;">
+                                                <div class="fw-semibold text-info mb-1">
+                                                    <Icon icon="mdi:bottle-tonic-plus-outline" class="me-1" style="vertical-align: -2px;"/>
+                                                    Detail Pemberian Produk
+                                                </div>
+                                                <div class="d-flex flex-column gap-1 ps-1 text-muted">
+                                                    <div><strong class="text-dark">Produk:</strong> {event.treatment.product || '-'}</div>
+                                                    <div><strong class="text-dark">Dosis:</strong> {event.treatment.dosis ? event.treatment.dosis : '-'}</div>
+                                                </div>
+                                            </div>
+                                        {/if}
                                         {#if event.reportedBy}
                                             <small class="text-muted d-block">
                                                 <Icon icon="mdi:account-outline" class="me-1" style="vertical-align: -1px;"/>{event.reportedBy}

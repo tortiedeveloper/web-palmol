@@ -60,9 +60,9 @@ async function getAiAnalysis(summaryForAI: any) {
 		Data Laporan:
 		- Jumlah Pohon Terinfeksi Saat Ini: ${summaryForAI.jumlahPohonSakit}
 		- Jumlah Pohon Sehat di Zona Kritis (risiko tinggi): ${summaryForAI.jumlahPohonZonaKritis}
-		- Total Proyeksi Kerugian Pendapatan (NPV): Rp ${summaryForAI.totalPotensiKerugian.toLocaleString('id-ID')}
-		- Total Estimasi Biaya Perawatan (Investasi): Rp ${summaryForAI.totalBiayaInvestasi.toLocaleString('id-ID')}
-		- Proyeksi Return on Investment (ROI): ${summaryForAI.proyeksiROI}%
+		- Total Proyeksi Kerugian Pendapatan (jika dibiarkan): Rp ${summaryForAI.totalPotensiKerugian.toLocaleString('id-ID')}
+		- Total Estimasi Biaya Perawatan (Skenario Mitigasi): Rp ${summaryForAI.totalBiayaInvestasi.toLocaleString('id-ID')}
+		- Tingkat Efektivitas Mitigasi: ${summaryForAI.proyeksiROI}% (Skor 0-100% yang menunjukkan seberapa efisien biaya perawatan dalam mencegah potensi kerugian finansial).
 		- Biaya Penggantian Bibit per Pohon: Rp ${summaryForAI.hargaBibit.toLocaleString('id-ID')}
 
 		Tolong buat laporan dengan struktur berikut:
@@ -73,8 +73,8 @@ async function getAiAnalysis(summaryForAI: any) {
 		### Analisis Risiko & Urgensi
 		(Jelaskan tingkat kegawatan berdasarkan jumlah pohon sakit dan kritis. Apa risiko terbesarnya jika tidak ditangani?)
 
-		### Analisis Finansial (ROI)
-		(Jelaskan apakah investasi perawatan ini layak secara finansial berdasarkan angka ROI. Sebutkan perbandingan antara biaya dan potensi pendapatan yang diselamatkan.)
+		### Evaluasi Efektivitas Mitigasi
+		(Evaluasi apakah pengeluaran biaya perawatan ini layak dan efisien berdasarkan 'Tingkat Efektivitas Mitigasi'. Jelaskan perbandingan antara biaya yang dikeluarkan dengan nilai pendapatan yang berhasil diselamatkan.)
 
 		### Rekomendasi Tindakan
 		(Berikan 2-3 poin rekomendasi tindakan yang paling prioritas untuk dilakukan oleh manajer perkebunan.)`;
@@ -227,10 +227,17 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 		const potensiPendapatanDiselamatkan = totalProyeksiKerugianPendapatan;
 		const hasilBersihIntervensi = potensiPendapatanDiselamatkan - totalEstimasiBiayaPerawatan;
-		const proyeksiROI =
-			totalEstimasiBiayaPerawatan > 0
-				? (hasilBersihIntervensi / totalEstimasiBiayaPerawatan) * 100
-				: 0;
+
+		// --- GANTI RUMUSNYA MENJADI INI ---
+		let tingkatEfektivitas = 0;
+		if (potensiPendapatanDiselamatkan > 0) {
+			// Rumus Efisiensi: (1 - (Biaya / Potensi Diselamatkan)) * 100
+			tingkatEfektivitas = (1 - (totalEstimasiBiayaPerawatan / potensiPendapatanDiselamatkan)) * 100;
+		}
+
+		// Pastikan nilainya tidak lebih dari 100% dan tidak kurang dari 0% (jika biayanya lebih besar dari kerugian, efektivitas 0%)
+		const proyeksiROI = Math.max(0, Math.min(tingkatEfektivitas, 100));
+		// ----------------------------------
 
 		const yearlyBreakdownKerugian = kerugianBreakdownPerPohon.map(
 			(yearlyLoss) =>

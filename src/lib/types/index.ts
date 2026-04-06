@@ -133,6 +133,11 @@ export interface TreeRecord extends FormattedDates { // Gabungkan FormattedDates
     userName?: string;
 }
 
+export interface TreatmentInfo {
+    product?: string;
+    dosis?: number;
+}
+
 // Tipe untuk Timeline
 export interface TimelineEventType {
     side?: 'left' | 'right';
@@ -142,6 +147,7 @@ export interface TimelineEventType {
     imageUrl?: string;
     reportedBy?: string;
     originalDateISO?: string;
+    treatment?: TreatmentInfo;
 }
 
 export interface TimelineDataType {

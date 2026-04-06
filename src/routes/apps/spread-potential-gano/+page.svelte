@@ -351,18 +351,14 @@
 								</Row>
 								<div class="text-center bg-primary-subtle rounded p-3 mt-3">
 									<h6 class="text-primary-emphasis text-uppercase fs-sm mb-1">
-										Proyeksi Return on Investment (ROI)
+										Tingkat Efektivitas Mitigasi
 									</h6>
-									<h2
-										class="fw-bold text-primary mb-0 display-5 {data.financialImpact.proyeksiROI < 0
-											? 'text-danger'
-											: ''}"
-									>
+									<h2 class="fw-bold text-primary mb-0 display-5 {data.financialImpact.proyeksiROI < 0 ? 'text-danger' : ''}">
 										{data.financialImpact.proyeksiROI.toFixed(1)}%
 									</h2>
-									<small class="text-muted"
-										>Return dari setiap rupiah yang diinvestasikan untuk perawatan.</small
-									>
+									<small class="text-muted">
+										Skor efisiensi pengeluaran biaya perawatan dibandingkan dengan potensi kerugian yang berhasil diselamatkan (Maksimal 100%).
+									</small>
 								</div>
 							{/if}
 						</CardBody>

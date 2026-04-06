@@ -87,7 +87,9 @@ export const GET = async (event: RequestEvent): Promise<Response> => {
                 description: recordData.description || "Tidak ada deskripsi.",
                 badge: recordData.status ? statusInfo.badgeText : undefined,
                 imageUrl: recordData.img,
-                reportedBy: reportedBy
+                reportedBy: reportedBy,
+                // --- TAMBAHKAN BARIS DI BAWAH INI ---
+                treatment: recordData.status === 'maintenance' ? recordData.treatment : undefined
             });
         }
         
