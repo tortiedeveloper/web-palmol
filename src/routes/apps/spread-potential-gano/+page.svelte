@@ -172,10 +172,14 @@
 								<Icon icon="mdi:format-list-bulleted-square" class="text-primary me-1" />Daftar
 								Pohon Berisiko
 							</h5>
-							<div class="flex-grow-1" style="overflow-y: auto;">
+							
+							<div class="flex-grow-1 pe-2" style="max-height: 400px; overflow-y: auto;">
+								
 								{#if data.criticalZoneTrees.length > 0}
-									<h6 class="text-danger">Zona Kritis ({data.stats.criticalCount} pohon)</h6>
-									<div class="table-responsive">
+									<h6 class="text-danger sticky-top bg-white py-2 mb-0" style="z-index: 1;">
+										Zona Kritis ({data.stats.criticalCount} pohon)
+									</h6>
+									<div class="table-responsive mb-3">
 										<Table hover size="sm" class="table-middle mb-0">
 											<tbody>
 												{#each data.criticalZoneTrees as item (item.tree.id)}
@@ -196,8 +200,11 @@
 										</Table>
 									</div>
 								{/if}
+								
 								{#if data.warningZoneTrees.length > 0}
-									<h6 class="text-warning mt-3">Zona Waspada ({data.stats.warningCount} pohon)</h6>
+									<h6 class="text-warning sticky-top bg-white py-2 mb-0" style="z-index: 1;">
+										Zona Waspada ({data.stats.warningCount} pohon)
+									</h6>
 									<div class="table-responsive">
 										<Table hover size="sm" class="table-middle mb-0">
 											<tbody>
@@ -219,6 +226,7 @@
 										</Table>
 									</div>
 								{/if}
+								
 							</div>
 						</CardBody>
 					</Card>
