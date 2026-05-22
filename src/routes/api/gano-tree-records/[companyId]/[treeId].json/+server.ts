@@ -36,7 +36,8 @@ export const GET = async (event: RequestEvent): Promise<Response> => {
     if (!userSession?.hasGanoAIAccess) {
         throw svelteKitError(403, 'Akses ditolak.');
     }
-    if (userSession.ganoAICompanyId !== companyIdFromParam) {
+    const allowedCompanies = [userSession.ganoAICompanyId, userSession.ganoAIActiveCompanyId].filter(Boolean);
+    if (!allowedCompanies.includes(companyIdFromParam)) {
         throw svelteKitError(403, 'Akses ditolak ke data perusahaan ini.');
     }
     if (!treeId) {
@@ -50,17 +51,31 @@ export const GET = async (event: RequestEvent): Promise<Response> => {
     console.log(`[API GanoTreeRecords] Fetching records for company: ${companyIdFromParam}, tree: ${treeId}`);
 
     try {
-        const usersMap = new Map<string, string>();
-        const usersColRef = ganoAIDbAdmin.collection('users');
-        const companyUsersQuery = usersColRef.where('companyId', '==', companyIdFromParam);
-        const usersSnapshot = await companyUsersQuery.get();
-        usersSnapshot.forEach(userDoc => {
-            usersMap.set(userDoc.id, userDoc.data().name || 'Tanpa Nama');
-        });
-
         const recordsRef = ganoAIDbAdmin.collection(`company/${companyIdFromParam}/tree/${treeId}/record`);
         const recordsQuery = recordsRef.orderBy("date.createdDate", "desc");
         const recordsSnapshot = await recordsQuery.get();
+
+        const uniqueUserIds = new Set<string>();
+        recordsSnapshot.forEach(recordDoc => {
+            const userId = recordDoc.data().userId;
+            if (userId) uniqueUserIds.add(userId);
+        });
+
+        // Ambil data pengguna berdasarkan userId (bukan companyId)
+        const usersMap = new Map<string, string>();
+        const usersColRef = ganoAIDbAdmin.collection('users');
+        if (uniqueUserIds.size > 0) {
+            const userIdsArray = Array.from(uniqueUserIds);
+            for (let i = 0; i < userIdsArray.length; i += 30) {
+                const batch = userIdsArray.slice(i, i + 30);
+                const snapshot = await usersColRef
+                    .where(admin.firestore.FieldPath.documentId(), 'in', batch)
+                    .get();
+                snapshot.forEach(userDoc => {
+                    usersMap.set(userDoc.id, userDoc.data().name || 'Tanpa Nama');
+                });
+            }
+        }
 
         const timelineEvents: TimelineEventType[] = [];
 
@@ -88,7 +103,6 @@ export const GET = async (event: RequestEvent): Promise<Response> => {
                 badge: recordData.status ? statusInfo.badgeText : undefined,
                 imageUrl: recordData.img,
                 reportedBy: reportedBy,
-                // --- TAMBAHKAN BARIS DI BAWAH INI ---
                 treatment: recordData.status === 'maintenance' ? recordData.treatment : undefined
             });
         }
@@ -97,6 +111,6 @@ export const GET = async (event: RequestEvent): Promise<Response> => {
 
     } catch (error: any) {
         console.error(`[API GanoTreeRecords] Error fetching records for tree ${treeId}:`, error);
-        throw svelteKitError(500, `Gagal mengambil riwayat pohon: ${error.message}`);
+        throw svelteKitError(500, `Gagal mengambil riwayat pohon: ${error?.message || 'Kesalahan tidak diketahui'}`);
     }
 };

@@ -221,6 +221,8 @@ export interface UserSessionData {
 
     ganoAIUserId?: string;
     ganoAICompanyId?: string;
+    ganoAIActiveCompanyId?: string; // Company yang sedang aktif (bisa beda dari default)
+    groupIdGano?: string; // Group ID untuk multi-kebun
     hasGanoAIAccess: boolean;
     isGanoAIPremium?: boolean;
 

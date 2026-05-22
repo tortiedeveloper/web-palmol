@@ -94,10 +94,10 @@ export const load: PageServerLoad = async ({ locals, url }): Promise<AnalyticsGa
 	const userSession = locals.user as UserSessionData | undefined;
 	const maxGanodermaTreeLimit = parseInt(MAX_GANODERMA_TREE_STRING || '5', 10);
 
-	if (!userSession?.hasGanoAIAccess || !userSession.ganoAICompanyId) {
+	if (!userSession?.hasGanoAIAccess || !(userSession.ganoAIActiveCompanyId || userSession.ganoAICompanyId)) {
 		throw redirect(303, '/auth/sign-in');
 	}
-	const companyIdToLoad = userSession.ganoAICompanyId;
+	const companyIdToLoad = userSession.ganoAIActiveCompanyId || userSession.ganoAICompanyId;
 
 	if (!ganoAIDbAdmin) {
 		console.error(`${logPrefix} CRITICAL: GanoAI Admin DB is NOT INITIALIZED!`);

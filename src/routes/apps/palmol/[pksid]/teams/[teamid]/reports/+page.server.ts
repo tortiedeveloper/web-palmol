@@ -189,6 +189,6 @@ export const load: PageServerLoad = async ({ params, url, locals }): Promise<Tea
         if (error.status && typeof error.message === 'string') { // Jika ini SvelteKitError
              throw error;
         }
-        throw svelteKitError(500, `Gagal memuat laporan tim: ${error.message}`);
+        throw svelteKitError(500, `Gagal memuat laporan tim: ${error?.message || 'Kesalahan tidak diketahui'}`);
     }
 };

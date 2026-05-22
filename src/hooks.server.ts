@@ -75,6 +75,8 @@ export const handle: Handle = async ({ event, resolve }) => {
                     hasGanoAIAccess: decodedToken.hasGanoAIAccess === true,
                     ganoAIUserId: decodedToken.uid,
                     ganoAICompanyId: decodedToken.ganoAICompanyId || undefined,
+                    ganoAIActiveCompanyId: decodedToken.ganoAICompanyId || undefined,
+                    groupIdGano: decodedToken.groupIdGano || undefined,
                     hasRipenessAccess: decodedToken.hasRipenessAccess === true,
                     ripenessUserId: decodedToken.uid,
                     ripenessCompanyId: decodedToken.ripenessCompanyId || undefined,

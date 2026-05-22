@@ -24,11 +24,11 @@ export interface ContactsGanoPageData {
 export const load: PageServerLoad = async ({ locals }): Promise<ContactsGanoPageData> => {
     const userSession = locals.user as UserSessionData | undefined;
 
-    if (!userSession?.hasGanoAIAccess || !userSession.ganoAICompanyId) {
-        console.warn("[ContactsGano Server Load] Sesi GanoAI tidak valid atau ganoAICompanyId tidak ada, redirecting ke login.");
+    if (!userSession?.hasGanoAIAccess || !(userSession.ganoAIActiveCompanyId || userSession.ganoAICompanyId)) {
+        console.warn("[ContactsGano Server Load] Sesi GanoAI tidak valid atau ganoAIActiveCompanyId tidak ada, redirecting ke login.");
         throw redirect(303, '/auth/sign-in');
     }
-    const companyIdToLoad = userSession.ganoAICompanyId;
+    const companyIdToLoad = userSession.ganoAIActiveCompanyId || userSession.ganoAICompanyId;
 
     if (!ganoAIDbAdmin) {
         console.error("[ContactsGano Server Load] GanoAI Admin DB tidak terinisialisasi!");
@@ -87,6 +87,6 @@ export const load: PageServerLoad = async ({ locals }): Promise<ContactsGanoPage
 
     } catch (error: any) {
         console.error(`[ContactsGano Server Load] Gagal memuat pengguna untuk GanoAI company ${companyIdToLoad}:`, error.stack || error);
-        throw svelteKitError(500, `Gagal memuat data pengguna GanoAI: ${error.message}`);
+        throw svelteKitError(500, `Gagal memuat data pengguna GanoAI: ${error?.message || 'Kesalahan tidak diketahui'}`);
     }
 };

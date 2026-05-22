@@ -151,6 +151,6 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		};
 	} catch (error: any) {
 		console.error(`[TreeRipeness Server Load] Gagal memuat pohon:`, error);
-		throw svelteKitError(500, `Gagal memuat data pohon Ripeness: ${error.message}`);
+		throw svelteKitError(500, `Gagal memuat data pohon Ripeness: ${error?.message || 'Kesalahan tidak diketahui'}`);
 	}
 };

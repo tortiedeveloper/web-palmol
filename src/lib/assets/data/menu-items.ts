@@ -17,19 +17,31 @@ export const ALL_MENU_ITEMS: MenuItemType[] = [
                 key: 'dashboard-analytics-gano',
                 label: 'Analitik',
                 url: '/dashboards/analytics-gano',
-                parentKey: 'group-ganoai', // Sesuaikan parentKey
+                parentKey: 'group-ganoai',
+            },
+            {
+                key: 'app-kebun-manager',
+                label: 'Kelola Kebun',
+                url: '/apps/kebun-manager',
+                parentKey: 'group-ganoai',
+            },
+            {
+                key: 'app-kebun-status',
+                label: 'Status Kebun',
+                url: '/apps/kebun-status',
+                parentKey: 'group-ganoai',
             },
             {
                 key: 'app-contacts-gano',
                 label: 'Pengguna',
                 url: '/apps/contacts-gano',
-                parentKey: 'group-ganoai', // Sesuaikan parentKey
+                parentKey: 'group-ganoai',
             },
             {
                 key: 'app-tree-gano',
                 label: 'Data Pohon',
                 url: '/apps/tree-gano',
-                parentKey: 'group-ganoai', // Sesuaikan parentKey
+                parentKey: 'group-ganoai',
             },
             {
                 key: 'app-spread-potential-gano',

@@ -108,10 +108,10 @@ async function getAiAnalysis(summaryForAI: any) {
 
 export const load: PageServerLoad = async ({ locals }) => {
 	const userSession = locals.user as UserSessionData | undefined;
-	if (!userSession?.hasGanoAIAccess || !userSession.ganoAICompanyId) {
+	if (!userSession?.hasGanoAIAccess || !(userSession.ganoAIActiveCompanyId || userSession.ganoAICompanyId)) {
 		throw redirect(303, '/auth/sign-in');
 	}
-	const companyIdToLoad = userSession.ganoAICompanyId;
+	const companyIdToLoad = userSession.ganoAIActiveCompanyId || userSession.ganoAICompanyId;
 	if (!ganoAIDbAdmin) {
 		throw svelteKitError(503, 'Layanan data GanoAI tidak tersedia.');
 	}
@@ -126,12 +126,35 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 		const settingsRef = ganoAIDbAdmin.collection('company_settings').doc(companyIdToLoad);
 		const settingsDoc = await settingsRef.get();
+		let financialParams: FinancialParameters;
 		if (!settingsDoc.exists) {
-			throw svelteKitError(404, `Pengaturan finansial untuk perusahaan Anda tidak ditemukan.`);
+			financialParams = {
+				hargaTbsPerKg: 2500,
+				produksiTbsTahunanPerPohon: 180,
+				tingkatDiskontoTahunan: 0.08,
+				probabilitasInfeksiKritis: 0.5,
+				kurvaPenurunanHasil: [0.2, 0.5, 0.8, 1.0],
+				biayaPerPohon: 25000,
+				hargaBibit: 20000,
+			};
+			await settingsRef.set({
+				...financialParams,
+				ganodermaSpikeThreshold: 0,
+				ganodermaTemplateSid: 'HX112ee7b040234eebc402d320526146b6',
+			});
+			console.log(`[SpreadPotential] Auto-created company_settings for ${companyIdToLoad}`);
+		} else {
+			const data = settingsDoc.data()!;
+			financialParams = {
+				hargaTbsPerKg: data.hargaTbsPerKg ?? 2500,
+				produksiTbsTahunanPerPohon: data.produksiTbsTahunanPerPohon ?? 180,
+				tingkatDiskontoTahunan: data.tingkatDiskontoTahunan ?? 0.08,
+				probabilitasInfeksiKritis: data.probabilitasInfeksiKritis ?? 0.5,
+				kurvaPenurunanHasil: data.kurvaPenurunanHasil ?? [0.2, 0.5, 0.8, 1.0],
+				biayaPerPohon: data.biayaPerPohon ?? 25000,
+				hargaBibit: data.hargaBibit ?? 20000,
+			};
 		}
-		const financialParams = settingsDoc.data() as FinancialParameters;
-		if (financialParams.biayaPerPohon === undefined) financialParams.biayaPerPohon = 0;
-		if (financialParams.hargaBibit === undefined) financialParams.hargaBibit = 0;
 
 		const treesColRef = ganoAIDbAdmin.collection(`company/${companyIdToLoad}/tree`);
 		const allTreesSnapshot = await treesColRef.get();
@@ -283,20 +306,32 @@ export const load: PageServerLoad = async ({ locals }) => {
 		};
 	} catch (error: any) {
 		console.error(`[SpreadPotential Server Load] Gagal memuat data:`, error);
-		throw svelteKitError(500, `Gagal memuat data potensi penyebaran: ${error.message}`);
+		const errorMsg = error?.message || (typeof error === 'string' ? error : JSON.stringify(error)) || 'Kesalahan tidak diketahui';
+		return {
+			companyName: 'Error',
+			sickTrees: [],
+			criticalZoneTrees: [],
+			warningZoneTrees: [],
+			hotspots: [],
+			stats: { criticalCount: 0, warningCount: 0, hotspotCount: 0 },
+			mapboxAccessToken: import.meta.env.VITE_MAPBOX_ACCESS_TOKEN,
+			financialImpact: null,
+			message: `Gagal memuat data: ${errorMsg}`,
+			aiAnalysis: Promise.resolve('')
+		};
 	}
 };
 
 export const actions: Actions = {
 	updateSettings: async ({ request, locals }) => {
 		const userSession = locals.user as UserSessionData | undefined;
-		if (!userSession?.hasGanoAIAccess || !userSession.ganoAICompanyId) {
+		if (!userSession?.hasGanoAIAccess || !(userSession.ganoAIActiveCompanyId || userSession.ganoAICompanyId)) {
 			return fail(403, { message: 'Akses ditolak.' });
 		}
 		if (!ganoAIDbAdmin) {
 			return fail(503, { message: 'Layanan database tidak tersedia.' });
 		}
-		const companyId = userSession.ganoAICompanyId;
+		const companyId = userSession.ganoAIActiveCompanyId;
 		const formData = await request.formData();
 
 		try {

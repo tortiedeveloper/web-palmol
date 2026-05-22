@@ -101,6 +101,6 @@ export const load: PageServerLoad = async ({ params, locals }) => {
     } catch (error: any) {
         console.error(`[TeamsList Server Load] Error mengambil daftar tim untuk PKS ${pksId}:`, error);
         if (error.status) throw error; // Jika sudah SvelteKitError, lempar lagi
-        throw svelteKitError(500, `Gagal memuat daftar tim: ${error.message}`);
+        throw svelteKitError(500, `Gagal memuat daftar tim: ${error?.message || 'Kesalahan tidak diketahui'}`);
     }
 };

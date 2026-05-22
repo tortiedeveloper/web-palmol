@@ -9,11 +9,70 @@
     export let criticalZoneTrees: Tree[] = [];
     export let warningZoneTrees: Tree[] = [];
     export let selectedTree: { tree: Tree; source: { id: string } } | null = null;
-    export let focusedSickTree: Tree | null = null; // PROPERTI BARU
+    export let focusedSickTree: Tree | null = null;
     export let initialViewState = { longitude: 106.8456, latitude: -6.2088, zoom: 12 };
 
     let mapContainer: HTMLDivElement;
     let mapInstance: mapboxgl.Map | null = null;
+
+    function haversineDist(lat1: number, lon1: number, lat2: number, lon2: number): number {
+        const R = 6371e3;
+        const toRad = (d: number) => d * Math.PI / 180;
+        const dLat = toRad(lat2 - lat1);
+        const dLon = toRad(lon2 - lon1);
+        const a = Math.sin(dLat / 2) ** 2 +
+            Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    interface CircleInput {
+        center: [number, number];
+        radius: number;
+    }
+
+    function mergeOverlappingCircles(circles: CircleInput[]): CircleInput[] {
+        const merged: CircleInput[] = [];
+        const used = new Set<number>();
+        for (let i = 0; i < circles.length; i++) {
+            if (used.has(i)) continue;
+            const group: CircleInput[] = [circles[i]];
+            used.add(i);
+            let foundNew = true;
+            while (foundNew) {
+                foundNew = false;
+                for (let j = 0; j < circles.length; j++) {
+                    if (used.has(j)) continue;
+                    for (const member of group) {
+                        const d = haversineDist(
+                            member.center[1], member.center[0],
+                            circles[j].center[1], circles[j].center[0]
+                        );
+                        if (d <= member.radius + circles[j].radius) {
+                            group.push(circles[j]);
+                            used.add(j);
+                            foundNew = true;
+                            break;
+                        }
+                    }
+                    if (foundNew) break;
+                }
+            }
+            if (group.length === 1) {
+                merged.push(group[0]);
+            } else {
+                let sumLat = 0, sumLng = 0;
+                for (const c of group) { sumLat += c.center[1]; sumLng += c.center[0]; }
+                const centroid: [number, number] = [sumLng / group.length, sumLat / group.length];
+                let maxDist = 0;
+                for (const c of group) {
+                    const d = haversineDist(centroid[1], centroid[0], c.center[1], c.center[0]);
+                    maxDist = Math.max(maxDist, d + c.radius);
+                }
+                merged.push({ center: centroid, radius: maxDist });
+            }
+        }
+        return merged;
+    }
 
     function createCircle(center: [number, number], radiusInMeters: number, points = 64): Polygon {
         const coords = { latitude: center[1], longitude: center[0] };
@@ -41,25 +100,42 @@
         mapInstance.addControl(new mapboxgl.NavigationControl(), 'top-right');
         mapInstance.on('load', updateMapLayers);
     }
-    
+
     function updateMapLayers() {
         if (!mapInstance || !mapInstance.isStyleLoaded()) {
              setTimeout(updateMapLayers, 200);
              return;
         }
 
-        const criticalCircles: FeatureCollection<Polygon> = { type: 'FeatureCollection', features: [] };
-        const warningCircles: FeatureCollection<Polygon> = { type: 'FeatureCollection', features: [] };
-        const sickTreePoints: FeatureCollection<Point> = { type: 'FeatureCollection', features: [] };
-        const criticalPoints: FeatureCollection<Point> = { type: 'FeatureCollection', features: [] };
-        const warningPoints: FeatureCollection<Point> = { type: 'FeatureCollection', features: [] };
+        const warningCircleInputs: CircleInput[] = [];
+        const criticalCircleInputs: CircleInput[] = [];
 
         sickTrees.forEach(tree => {
             if (!tree.location) return;
             const center: [number, number] = [tree.location.longitude, tree.location.latitude];
-            criticalCircles.features.push({ type: 'Feature', geometry: createCircle(center, 10), properties: {} });
-            warningCircles.features.push({ type: 'Feature', geometry: createCircle(center, 100), properties: {} });
-            sickTreePoints.features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: center }, properties: { name: tree.name, id: tree.id } });
+            warningCircleInputs.push({ center, radius: 100 });
+            criticalCircleInputs.push({ center, radius: 10 });
+        });
+
+        const mergedWarning = mergeOverlappingCircles(warningCircleInputs);
+        const mergedCritical = mergeOverlappingCircles(criticalCircleInputs);
+
+        const warningCircles: FeatureCollection<Polygon> = { type: 'FeatureCollection', features: [] };
+        const criticalCircles: FeatureCollection<Polygon> = { type: 'FeatureCollection', features: [] };
+        const sickTreePoints: FeatureCollection<Point> = { type: 'FeatureCollection', features: [] };
+        const criticalPoints: FeatureCollection<Point> = { type: 'FeatureCollection', features: [] };
+        const warningPoints: FeatureCollection<Point> = { type: 'FeatureCollection', features: [] };
+
+        for (const wc of mergedWarning) {
+            warningCircles.features.push({ type: 'Feature', geometry: createCircle(wc.center, wc.radius), properties: {} });
+        }
+        for (const cc of mergedCritical) {
+            criticalCircles.features.push({ type: 'Feature', geometry: createCircle(cc.center, cc.radius), properties: {} });
+        }
+
+        sickTrees.forEach(tree => {
+            if (!tree.location) return;
+            sickTreePoints.features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [tree.location.longitude, tree.location.latitude] }, properties: { name: tree.name, id: tree.id } });
         });
 
         criticalZoneTrees.forEach(item => {
@@ -70,7 +146,7 @@
              if (!item.location) return;
             warningPoints.features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [item.location.longitude, item.location.latitude] }, properties: { name: item.name, id: item.id } });
         });
-        
+
         const layers = ['warning-fill', 'critical-fill', 'sick-points', 'critical-points', 'warning-points', 'threat-line'];
         const sources = ['warning-circles', 'critical-circles', 'sick-trees', 'critical-trees', 'warning-trees', 'threat-line-source'];
         layers.forEach(id => { if (mapInstance?.getLayer(id)) mapInstance.removeLayer(id); });

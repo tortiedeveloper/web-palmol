@@ -98,6 +98,6 @@ export const GET = async (event: RequestEvent): Promise<Response> => {
 
     } catch (error: any) {
         console.error(`[API RipenessTreeRecords] Error fetching records for tree ${treeId}:`, error);
-        throw svelteKitError(500, `Gagal mengambil riwayat pohon Ripeness: ${error.message}`);
+        throw svelteKitError(500, `Gagal mengambil riwayat pohon Ripeness: ${error?.message || 'Kesalahan tidak diketahui'}`);
     }
 };

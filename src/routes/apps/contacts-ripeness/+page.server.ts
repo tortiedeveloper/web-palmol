@@ -80,6 +80,6 @@ export const load: PageServerLoad = async ({ locals }) => {
 
     } catch (error: any) {
         console.error(`[ContactsRipeness Server Load] Gagal memuat pengguna untuk Ripeness company ${companyIdToLoad}:`, error);
-        throw svelteKitError(500, `Gagal memuat data pengguna Ripeness: ${error.message}`);
+        throw svelteKitError(500, `Gagal memuat data pengguna Ripeness: ${error?.message || 'Kesalahan tidak diketahui'}`);
     }
 };

@@ -134,6 +134,6 @@ export const load: PageServerLoad = async ({ params, locals }) => {
     } catch (error: any) {
         console.error(`[TeamDetail Server Load] Error PKS: ${pksid_from_params}, Tim: ${teamid_from_params}):`, error);
         if (error.status) throw error; // Jika sudah SvelteKitError
-        throw svelteKitError(500, `Gagal memuat detail tim: ${error.message}`);
+        throw svelteKitError(500, `Gagal memuat detail tim: ${error?.message || 'Kesalahan tidak diketahui'}`);
     }
 };

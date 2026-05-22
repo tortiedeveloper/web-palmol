@@ -145,6 +145,6 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
     } catch (error: any) {
         console.error(`[ContactsPalmol Server Load] Gagal memuat data:`, error);
-        throw svelteKitError(500, `Gagal memuat data pengguna Palmol: ${error.message}`);
+        throw svelteKitError(500, `Gagal memuat data pengguna Palmol: ${error?.message || 'Kesalahan tidak diketahui'}`);
     }
 };

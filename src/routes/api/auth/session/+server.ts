@@ -55,6 +55,8 @@ export const POST: RequestHandler = async ({ request, cookies }) => { // Tipe un
             hasGanoAIAccess: decodedToken.hasGanoAIAccess === true,
             ganoAIUserId: decodedToken.uid,
             ganoAICompanyId: decodedToken.ganoAICompanyId || undefined,
+            ganoAIActiveCompanyId: decodedToken.ganoAICompanyId || undefined, // Default ke companyId
+            groupIdGano: decodedToken.groupIdGano || undefined,
             hasRipenessAccess: decodedToken.hasRipenessAccess === true,
             ripenessUserId: decodedToken.uid,
             ripenessCompanyId: decodedToken.ripenessCompanyId || undefined,

@@ -230,10 +230,12 @@ def manage_user_access_claims(req: https_fn.CallableRequest) -> https_fn.Respons
         
         gano_ai_company_id = user_data.get('ganoAICompanyId') if isinstance(user_data.get('ganoAICompanyId'), str) else None
         ripeness_company_id = user_data.get('ripenessCompanyId') if isinstance(user_data.get('ripenessCompanyId'), str) else None
+        group_id_gano = user_data.get('groupIdGano') if isinstance(user_data.get('groupIdGano'), str) else None
 
         claims = {
             'hasGanoAIAccess': is_active and ('ganoAI' in memberships),
             'ganoAICompanyId': gano_ai_company_id if is_active and ('ganoAI' in memberships) else None,
+            'groupIdGano': group_id_gano if is_active and ('ganoAI' in memberships) else None,
             'hasRipenessAccess': is_active and ('ripeness' in memberships),
             'ripenessCompanyId': ripeness_company_id if is_active and ('ripeness' in memberships) else None,
             'accountActive': is_active

@@ -312,6 +312,6 @@ export const load: PageServerLoad = async ({ locals, url }): Promise<PalmolAnaly
 
     } catch (error: any) {
         console.error(`[AnalyticsPalmol Server Load] Gagal memuat data analitik:`, error.stack || error);
-        throw svelteKitError(500, `Gagal memuat data analitik Palmol: ${error.message}`);
+        throw svelteKitError(500, `Gagal memuat data analitik Palmol: ${error?.message || 'Kesalahan tidak diketahui'}`);
     }
 };

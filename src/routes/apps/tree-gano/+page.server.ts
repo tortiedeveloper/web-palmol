@@ -29,10 +29,10 @@ function formatDisplayDate(isoDateString: string | null | undefined): string {
 
 export const load: PageServerLoad = async ({ locals, url }) => {
 	const userSession = locals.user as UserSessionData | undefined;
-	if (!userSession?.hasGanoAIAccess || !userSession.ganoAICompanyId) {
+	if (!userSession?.hasGanoAIAccess || !(userSession.ganoAIActiveCompanyId || userSession.ganoAICompanyId)) {
 		throw redirect(303, '/auth/sign-in');
 	}
-	const companyIdToLoad = userSession.ganoAICompanyId;
+	const companyIdToLoad = userSession.ganoAIActiveCompanyId || userSession.ganoAICompanyId;
 	if (!ganoAIDbAdmin) {
 		throw svelteKitError(503, 'Layanan data pohon GanoAI tidak tersedia saat ini.');
 	}
@@ -51,15 +51,6 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 			daftarKawasan = companyDoc.data()?.daftarKawasan || [];
 			daftarKawasan.sort();
 		}
-
-		// Ambil data pengguna untuk mapping
-		const usersMap = new Map<string, string>();
-		const usersColRef = ganoAIDbAdmin.collection('users');
-		const companyUsersQuery = usersColRef.where('companyId', '==', companyIdToLoad);
-		const usersSnapshot = await companyUsersQuery.get();
-		usersSnapshot.forEach((userDoc) => {
-			usersMap.set(userDoc.id, userDoc.data().name || 'Tanpa Nama');
-		});
 
 		// Bangun query pohon
 		const treesColRef = ganoAIDbAdmin.collection(`company/${companyIdToLoad}/tree`);
@@ -84,6 +75,28 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		const treesList: Tree[] = [];
 		const treeFeaturesForMap: any[] = [];
 		const locations: GeoLocation[] = [];
+		const uniqueUserIds = new Set<string>();
+
+		querySnapshot.forEach((doc) => {
+			const data = doc.data();
+			if (data.userId) uniqueUserIds.add(data.userId);
+		});
+
+		// Ambil data pengguna berdasarkan userId (bukan companyId)
+		const usersMap = new Map<string, string>();
+		const usersColRef = ganoAIDbAdmin.collection('users');
+		if (uniqueUserIds.size > 0) {
+			const userIdsArray = Array.from(uniqueUserIds);
+			for (let i = 0; i < userIdsArray.length; i += 30) {
+				const batch = userIdsArray.slice(i, i + 30);
+				const snapshot = await usersColRef
+					.where(admin.firestore.FieldPath.documentId(), 'in', batch)
+					.get();
+				snapshot.forEach((userDoc) => {
+					usersMap.set(userDoc.id, userDoc.data().name || 'Tanpa Nama');
+				});
+			}
+		}
 
 		querySnapshot.forEach((doc) => {
 			const data = doc.data();
@@ -107,7 +120,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 				date: { createdDate: createdDateISO, updatedDate: updatedDateISO },
 				createdDateFormatted: formatDisplayDate(createdDateISO),
 				updatedDateFormatted: formatDisplayDate(updatedDateISO),
-				kawasan: data.kawasan // Sertakan field kawasan
+				kawasan: data.kawasan
 			};
 			treesList.push(serializableTree);
 
@@ -122,7 +135,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 						last_status: data.last_status || 'unknown',
 						img: data.img,
 						description: data.description,
-						kawasan: data.kawasan || 'N/A' // Sertakan field kawasan untuk popup peta
+						kawasan: data.kawasan || 'N/A'
 					}
 				});
 			}
@@ -157,6 +170,6 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		};
 	} catch (error: any) {
 		console.error(`[TreeGano Server Load] Gagal memuat pohon:`, error);
-		throw svelteKitError(500, `Gagal memuat data pohon GanoAI: ${error.message}`);
+		throw svelteKitError(500, `Gagal memuat data pohon GanoAI: ${error?.message || 'Kesalahan tidak diketahui'}`);
 	}
 };

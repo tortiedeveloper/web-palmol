@@ -98,6 +98,6 @@ export const load: PageServerLoad = async ({ locals }) => {
 
     } catch (error: any) {
         console.error("[Palmol PKS List] Error mengambil daftar PKS:", error);
-        throw svelteKitError(500, `Gagal memuat daftar PKS: ${error.message}`);
+        throw svelteKitError(500, `Gagal memuat daftar PKS: ${error?.message || 'Kesalahan tidak diketahui'}`);
     }
 };
