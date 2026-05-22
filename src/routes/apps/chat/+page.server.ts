@@ -66,14 +66,14 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 		const conversationsRef = db.collection('conversations');
 		const existingConvoQuery = conversationsRef
-			.where('clientCompanyId', '==', clientCompanyId)
+			.where('participantIds', 'array-contains', clientUserId)
 			.limit(1);
 
 		const existingConvoSnap = await existingConvoQuery.get();
 		let conversationId: string;
 
 		if (existingConvoSnap.empty) {
-			console.log(`Membuat conversation baru untuk company ${clientCompanyId}`);
+			console.log(`Membuat conversation baru untuk user ${clientUserId}`);
 			const newConvoRef = await conversationsRef.add({
 				clientCompanyId: clientCompanyId,
 				participantIds: [clientUserId, ...adminIds],
