@@ -244,6 +244,7 @@ export const actions: Actions = {
             const newCompanyId = companyRef.id;
 
             await companyRef.set({
+                id: newCompanyId,
                 company_name: companyName,
                 consultationId: '',
                 createdAt: admin.firestore.FieldValue.serverTimestamp(),
