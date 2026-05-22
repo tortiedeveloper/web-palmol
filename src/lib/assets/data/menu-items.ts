@@ -75,6 +75,12 @@ export const ALL_MENU_ITEMS: MenuItemType[] = [
                 url: '/apps/tree-ripeness',
                 parentKey: 'group-sawitharvest', // Sesuaikan parentKey
             },
+            {
+                key: 'app-kawasan-ripeness',
+                label: 'Management Kawasan',
+                url: '/apps/kawasan-ripeness',
+                parentKey: 'group-sawitharvest',
+            },
         ],
     },
 
@@ -109,13 +115,6 @@ export const ALL_MENU_ITEMS: MenuItemType[] = [
                 parentKey: 'group-palmol', // Sesuaikan parentKey
             },
         ],
-    },
-    {
-        key: 'app-kawasan',
-        label: 'Manajemen Kawasan',
-        icon: 'mdi:map-marker-multiple-outline',
-        url: '/apps/kawasan',
-        isTitle: false
     },
     {
         key: 'section-support',

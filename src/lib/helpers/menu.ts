@@ -54,13 +54,6 @@ export const getMenuItems = (userSession?: UserSessionData | null): MenuItemType
     }
     
     if (userSession.hasGanoAIAccess || userSession.hasRipenessAccess) {
-        // TAMBAHKAN BLOK 'if' DI BAWAH INI
-        const kawasanMenu = ALL_MENU_ITEMS.find((item) => item.key === 'app-kawasan');
-        if (kawasanMenu) {
-            filteredMenu.push(kawasanMenu);
-        }
-        // AKHIR BLOK TAMBAHAN
-
         const supportSection = ALL_MENU_ITEMS.find((item) => item.key === 'section-support');
 		if (supportSection) {
 			filteredMenu.push(supportSection);

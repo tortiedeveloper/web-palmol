@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import type { ApexOptions } from 'apexcharts';
 
 	// JANGAN impor ApexCharts di sini
@@ -12,6 +12,8 @@
 	// Variabel untuk menyimpan instance chart, gunakan 'any' karena akan diisi secara dinamis
 	let chart: any = null;
 	let chartElement: HTMLDivElement;
+	let renderTimeoutId: ReturnType<typeof setTimeout> | null = null;
+	let isDestroyed = false;
 
 	// onMount HANYA berjalan di sisi browser, setelah server render selesai
 	onMount(async () => {
@@ -19,6 +21,8 @@
 
 		// Fungsi untuk menginisialisasi chart
 		const initChart = () => {
+			if (isDestroyed || !chartElement) return;
+
 			// Hancurkan chart lama jika ada untuk mencegah memory leak
 			if (chart) {
 				chart.destroy();
@@ -32,13 +36,15 @@
 
 		// Fungsi untuk memeriksa apakah kontainer sudah siap
 		const checkAndRender = () => {
+			if (isDestroyed) return;
+
 			// Cek apakah lebar kontainer sudah lebih dari 0
 			if (chartElement && chartElement.clientWidth > 0) {
 				initChart();
 			} else {
 				// Jika belum, tunggu sejenak dan coba lagi.
 				// Ini memberi waktu pada browser untuk menyelesaikan kalkulasi layout.
-				setTimeout(checkAndRender, 50); 
+				renderTimeoutId = setTimeout(checkAndRender, 50); 
 			}
 		};
 		
@@ -46,7 +52,20 @@
 		checkAndRender();
 	});
 
-	$: if (chart && options && chartElement.clientWidth > 0) {
+	// Bersihkan chart dan timeout saat komponen dihancurkan
+	onDestroy(() => {
+		isDestroyed = true;
+		if (renderTimeoutId) {
+			clearTimeout(renderTimeoutId);
+			renderTimeoutId = null;
+		}
+		if (chart) {
+			chart.destroy();
+			chart = null;
+		}
+	});
+
+	$: if (!isDestroyed && chart && options && chartElement && chartElement.clientWidth > 0) {
 		chart.updateOptions(options);
 	}
 </script>

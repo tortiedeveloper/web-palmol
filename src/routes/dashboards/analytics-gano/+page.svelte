@@ -18,6 +18,7 @@
 	import ApexChart from '$lib/components/ApexChart.svelte';
 	import ProblemTreesTable from './components/ProblemTreesTable.svelte';
 	import GanodermaWarning from './components/GanodermaWarning.svelte';
+	import Icon from '@iconify/svelte';
 
 	import type { PageData as AnalyticsGanoPageDataType } from './$types';
 	import type { ApexOptions } from 'apexcharts';
@@ -287,7 +288,7 @@
 						<CardTitle class="mb-0 fs-1rem fw-medium">Peta Sebaran Kesehatan Pohon</CardTitle>
 					</CardHeader>
 					<CardBody class="pt-2">
-						{#if currentMapboxAccessToken && currentTreeDataGeoJSON && currentTreeDataGeoJSON.features.length > 0}
+                    		{#if currentMapboxAccessToken && currentTreeDataGeoJSON && currentTreeDataGeoJSON.features.length > 0}
 							<MapboxMap
 								accessToken={currentMapboxAccessToken}
 								treeDataGeoJSON={currentTreeDataGeoJSON}
@@ -295,14 +296,11 @@
 							/>
 						{:else if !currentMapboxAccessToken}
 							<Alert color="warning" class="my-3">Token Mapbox tidak tersedia.</Alert>
-						{:else if !serverSideErrorMessage}
-							<div class="text-center py-5">
-								<Spinner color="primary" /><p class="mt-2 text-muted">Memuat data peta...</p>
-							</div>
 						{:else}
-							<p class="text-center text-muted py-5">
-								Data peta tidak dapat dimuat atau tidak ada pohon terdata.
-							</p>
+							<div class="text-center py-5">
+								<Icon icon="mdi:map-marker-off" class="text-muted mb-3" width="64" height="64" />
+								<p class="text-muted">Belum ada data pohon untuk ditampilkan di peta.</p>
+							</div>
 						{/if}
 					</CardBody>
 				</Card>
@@ -313,16 +311,15 @@
 						<CardTitle class="mb-0 fs-1rem fw-medium">Status Kesehatan Pohon</CardTitle>
 					</CardHeader>
 					<CardBody class="d-flex justify-content-center align-items-center pt-2">
-						{#if an_compositionSeries && an_compositionSeries.length > 0 && an_compositionSeries.reduce((a, b) => a + b, 0) > 0}
+                    		{#if an_compositionSeries && an_compositionSeries.length > 0 && an_compositionSeries.reduce((a, b) => a + b, 0) > 0}
 							<div style="min-height: 300px; width: 100%;">
 								<ApexChart id="gano-composition-chart" options={finalCompositionOptions} />
 							</div>
-						{:else if !serverSideErrorMessage}
-							<div class="text-center py-5">
-								<Spinner color="primary" /><p class="mt-2 text-muted">Memuat komposisi...</p>
-							</div>
 						{:else}
-							<p class="text-center text-muted py-5">Data komposisi tidak tersedia.</p>
+							<div class="text-center py-5">
+								<Icon icon="mdi:chart-pie" class="text-muted mb-3" width="64" height="64" />
+								<p class="text-muted">Belum ada data status kesehatan pohon.</p>
+							</div>
 						{/if}
 					</CardBody>
 				</Card>
@@ -358,16 +355,15 @@
 					</CardHeader>
 					
 					<CardBody class="pt-2">
-						{#if an_performanceSeries && an_performanceSeries.length > 0 && an_performanceSeries[0]?.data?.length > 0}
+                    		{#if an_performanceSeries && an_performanceSeries.length > 0 && an_performanceSeries[0]?.data?.length > 0}
 							<div style="min-height: 313px;">
 								<ApexChart id="gano-trend-chart" options={finalPerformanceOptions} />
 							</div>
-						{:else if !serverSideErrorMessage}
-							<div class="text-center py-5">
-								<Spinner color="primary" /><p class="mt-2 text-muted">Memuat data tren...</p>
-							</div>
 						{:else}
-							<p class="text-center text-muted py-5">Data tren tidak tersedia.</p>
+							<div class="text-center py-5">
+								<Icon icon="mdi:chart-line" class="text-muted mb-3" width="64" height="64" />
+								<p class="text-muted">Belum ada data dinamika kesehatan pohon.</p>
+							</div>
 						{/if}
 					</CardBody>
 				</Card>

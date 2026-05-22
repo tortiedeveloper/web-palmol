@@ -19,12 +19,12 @@
 	let kawasanInputs = [{ id: Date.now(), value: '' }];
 
 	function addKawasanInput() {
-    kawasanInputs = [...kawasanInputs, { id: Date.now(), value: '' }];
-}
+    	kawasanInputs = [...kawasanInputs, { id: Date.now(), value: '' }];
+	}
 
-function removeKawasanInput(id: number) {
-    kawasanInputs = kawasanInputs.filter(item => item.id !== id);
-}
+	function removeKawasanInput(id: number) {
+    	kawasanInputs = kawasanInputs.filter(item => item.id !== id);
+	}
 
 	async function confirmDelete(kawasan: string) {
 		const result = await Swal.fire({
@@ -49,7 +49,7 @@ function removeKawasanInput(id: number) {
 
 <ToastContainer />
 <DefaultLayout {data}>
-	<PageBreadcrumb title="Manajemen Kawasan" subTitle="Pengaturan Umum" />
+	<PageBreadcrumb title="Management Kawasan" subTitle="SawitHarvest" />
 
 	<Row class="mt-3">
 		<Col xl="4">
