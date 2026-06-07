@@ -16,23 +16,21 @@ body {
 }
 
 .auth-logo {
-    .logo-dark {
-        display: block;
-    }
+    .logo-dark { display: block; }
+    .logo-light { display: none; }
 
-    .logo-light {
-        display: none;
+    .logo-lg {
+        height: 55px;
     }
 }
 
 html[data-bs-theme='dark'] {
     .auth-logo {
-        .logo-dark {
-            display: none;
-        }
+        .logo-dark { display: none; }
+        .logo-light { display: block; }
 
-        .logo-light {
-            display: block;
+        .logo-lg {
+            height: 55px;
         }
     }
 }

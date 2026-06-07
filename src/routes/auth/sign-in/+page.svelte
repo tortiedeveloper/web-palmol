@@ -129,7 +129,7 @@
                 <div class="p-4">
                     <div class="mx-auto mb-4 text-center auth-logo"> <LogoBox/> </div>
                     <h2 class="fw-bold text-center fs-18">Sign In</h2>
-                    <p class="text-muted text-center mt-1 mb-4">Akses panel admin Sawit Pintar.</p>
+                    <p class="text-muted text-center mt-1 mb-4">Akses panel GanoAI.</p>
                     <Row class="justify-content-center">
                         <Col md="10" xs="12">
                             <form on:submit={handleLogin} class="authentication-form">
